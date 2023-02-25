@@ -150,13 +150,6 @@ class MMActionServer(Node):
             pass
 
         self.val_pipeline = self.rgb_stdet_config.data.val.pipeline
-        # sampler = [x for x in val_pipeline if x['type'] == 'SampleAVAFrames'][0]
-        # clip_len, frame_interval = sampler['clip_len'], sampler['frame_interval']
-        # assert clip_len % 2 == 0, 'We would like to have an even clip_len'
-
-        # window_size = clip_len * frame_interval
-        # num_frame = self.action_recog_step
-        # self.timestamps = np.arange(window_size // 2, num_frame + 1 - window_size // 2, self.action_recog_step)
 
         # Get img_norm_cfg
         self.img_norm_cfg = self.rgb_stdet_config['img_norm_cfg']
@@ -242,20 +235,7 @@ class MMActionServer(Node):
         Returns:
             list[np.ndarray]: The human detection results.
         """
-        # model = init_detector(self.det_config, self.det_checkpoint, self.device)
-        # assert model.CLASSES[0] == 'person', ('We require you to use a detector trained on COCO')
-        # results = []
-        # print('Performing Human Detection for each frame')
-        # prog_bar = mmcv.ProgressBar(len(frame_paths))
-
-        # for frame_path in frame_paths:
-        #     result = inference_detector(self.det_model, frame_path)
-        #     # We only keep human detections with score larger than det_score_thr
-        #     result = result[0][result[0][:, 4] >= self.det_score_thr]
-        #     results.append(result)
-        #     prog_bar.update()
-
-        # rosから取得した画像から
+        # rosから取得した画像から認識を行う
         result = inference_detector(self.det_model, cv_img)
         result = result[0][result[0][:, self.action_topk] >= self.det_score_thr]
 
@@ -322,10 +302,6 @@ class MMActionServer(Node):
     #     return skeleton_action_result
 
     def rgb_based_stdet(self, frames, label_map, human_detections, w, h, new_w, new_h, w_ratio, h_ratio):
-        # rgb_stdet_config = mmcv.Config.fromfile(self.rgb_stdet_config)
-        # rgb_stdet_config.merge_from_dict(self.cfg_options)
-
-        # val_pipeline = self.rgb_stdet_config.data.val.pipeline
         sampler = [x for x in self.val_pipeline if x['type'] == 'SampleAVAFrames'][0]
         clip_len, frame_interval = sampler['clip_len'], sampler['frame_interval']
         assert clip_len % 2 == 0, 'We would like to have an even clip_len'
@@ -369,7 +345,6 @@ class MMActionServer(Node):
                     if result[i][j, 4] > self.action_score_th:
                         prediction[j].append((label_map[i + 1], result[i][j, 4]))
             predictions.append(prediction)
-        # prog_bar.update()
 
         return timestamps, predictions
 
@@ -442,13 +417,7 @@ class MMActionServer(Node):
             results.append((prop.data.cpu().numpy(), [x[0] for x in res], [x[1] for x in res]))
         return results
 
-    def queue(self, src, a):
-        dst = np.roll(src, -1)
-        dst[-1] = a
-        return dst
-
     def run(self, img_msg):
-
         self.loginfo("start human detection")
         self.cv_img = self.tam_cv_bridge.compressed_imgmsg_to_cv2(img_msg)
         human_detections = self.detection_inference(self.cv_img)
@@ -485,14 +454,11 @@ class MMActionServer(Node):
             # 規定の枚数溜まっていたら，最新の結果を入れてからアクション認識を行う
             elif len(self.frames) == self.predict_stepsize:
                 self.loginfo("start action recognition with FIFO")
-                # self.queue(self.pose_results_list, pose_results)
                 self.human_detections_list.pop(0)
                 self.frames.pop(0)
 
                 self.human_detections_list.append(human_detections)
                 self.frames.append(new_img)
-                # self.queue(self.human_detections_list, human_detections)
-                # self.queue(self.frames, new_img)
 
             # たまりすぎてしまった場合は，一度リセットする
             elif len(self.frames) > self.predict_stepsize:
@@ -514,6 +480,7 @@ class MMActionServer(Node):
             stdet_preds = None
 
             # キーポイントごとの処理
+            # FIXME
             if self.use_skeleton_stdet:
                 self.logtrace('Use skeleton-based SpatioTemporal Action Detection')
                 clip_len, frame_interval = 30, 1
