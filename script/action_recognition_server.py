@@ -2,10 +2,11 @@
 # -*- coding: utf-8 -*-
 
 # Copyright (c) OpenMMLab. All rights reserved.
-import os
-import os.path as osp
-import shutil
 
+# import os.path as osp
+# import shutil
+
+import os
 import cv2
 import copy as cp
 import mmcv
@@ -15,11 +16,11 @@ import torch
 from mmcv.runner import load_checkpoint
 from mmaction.models import build_detector, build_model, build_recognizer
 
-from mmaction.apis import inference_recognizer, init_recognizer
-from mmdeploy.apis import build_task_processor
-from mmdeploy.utils.config_utils import load_config
-import onnxruntime
-import onnx
+# from mmaction.apis import inference_recognizer, init_recognizer
+# from mmdeploy.apis import build_task_processor
+# from mmdeploy.utils.config_utils import load_config
+# import onnxruntime
+# import onnx
 # import copy
 
 try:
@@ -36,10 +37,10 @@ except (ImportError, ModuleNotFoundError):
                       '`init_pose_model`, and `vis_pose_result` form '
                       '`mmpose.apis`. These apis are required in this demo! ')
 
-try:
-    import moviepy.editor as mpy
-except ImportError:
-    raise ImportError('Please install moviepy to enable output file')
+# try:
+#     import moviepy.editor as mpy
+# except ImportError:
+#     raise ImportError('Please install moviepy to enable output file')
 
 # rosに関連するインポート
 # import tamlib
@@ -333,30 +334,6 @@ class MMActionServer(Node):
         num_frame = len(frames)
         timestamps = np.arange(window_size // 2, num_frame + 1 - window_size // 2, self.predict_stepsize)
 
-        # # Get img_norm_cfg
-        # img_norm_cfg = self.rgb_stdet_config['img_norm_cfg']
-        # if 'to_rgb' not in img_norm_cfg and 'to_bgr' in img_norm_cfg:
-        #     to_bgr = img_norm_cfg.pop('to_bgr')
-        #     img_norm_cfg['to_rgb'] = to_bgr
-        # img_norm_cfg['mean'] = np.array(img_norm_cfg['mean'])
-        # img_norm_cfg['std'] = np.array(img_norm_cfg['std'])
-
-        # Build STDET model
-        # try:
-        #     # In our spatiotemporal detection demo, different actions should have
-        #     # the same number of bboxes.
-        #     self.rgb_stdet_config['model']['test_cfg']['rcnn']['action_thr'] = .0
-        # except KeyError:
-        #     pass
-
-        # self.rgb_stdet_config.model.backbone.pretrained = None
-        # rgb_stdet_model = build_detector(
-        #     self.rgb_stdet_config.model, test_cfg=self.rgb_stdet_config.get('test_cfg'))
-
-        # load_checkpoint(rgb_stdet_model, self.rgb_stdet_checkpoint, map_location='cpu')
-        # rgb_stdet_model.to(self.device)
-        # rgb_stdet_model.eval()
-
         predictions = []
 
         self.loginfo('Performing SpatioTemporal Action Detection for each clip')
@@ -370,13 +347,6 @@ class MMActionServer(Node):
             predictions.append(None)
             return None, None
 
-        # start_frame = 5 - (clip_len // 2 - 1) * frame_interval
-        # frame_inds = 0 + np.arange(0, window_size, frame_interval)
-        # frame_inds = list(frame_inds - 1)
-
-        # cv2.imshow("test", imgs[0].astype(np.uint8))
-        # cv2.waitKey(0)
-        # imgs = [frames[ind].astype(np.float32) for ind in frame_inds]
         imgs = [img.astype(np.float32) for img in frames]
         _ = [mmcv.imnormalize_(img, **self.img_norm_cfg) for img in imgs]
         # THWC -> CTHW -> 1CTHW
@@ -478,16 +448,6 @@ class MMActionServer(Node):
         return dst
 
     def run(self, img_msg):
-
-        # fin_add_flag = False  # 配列への保存方法を管理するためのフラグ
-        # frame_paths, original_frames = frame_extraction(args.video)
-        # num_frame = len(frame_paths)
-        # h, w, _ = original_frames[0].shape
-
-        # Get Human detection results and pose results
-        # self.loginfo("wait compressedImage message")
-        # self.img_msg = rospy.wait_for_message(self.description.topic.head_rgbd.rgb_compressed, CompressedImage)
-        # self.img_msg = rospy.wait_for_message("/camera/rgb/image_raw", Image)
 
         self.loginfo("start human detection")
         self.cv_img = self.tam_cv_bridge.compressed_imgmsg_to_cv2(img_msg)
@@ -593,31 +553,8 @@ class MMActionServer(Node):
             self.pub.result_action.publish(self.result_action_msg)
 
             # temp_human_detections_list = []
-            # self.pose_results_list = []
-            # self.human_detections_list = []
-            # self.frames = []
 
             return True
-
-            # dense_n = int(self.predict_stepsize / self.output_stepsize)
-            # output_timestamps = self.dense_timestamps(timestamps, dense_n)
-            # # frames = [cv2.imread(frame_paths[timestamp - 1]) for timestamp in output_timestamps]
-
-            # print('Performing visualization')
-            # pose_model = init_pose_model(self.pose_config, self.pose_checkpoint, self.device)
-
-            # # if args.use_skeleton_recog or args.use_skeleton_stdet:
-            # #     pose_results = [
-            # #         pose_results[timestamp - 1] for timestamp in output_timestamps
-            # #     ]
-            # action_result = ""
-            # vis_frames = self.visualize(self.frames, stdet_results, pose_results, action_result, pose_model)
-            # vid = mpy.ImageSequenceClip([x[:, :, ::-1] for x in vis_frames], fps=self.output_fps)
-            # vid.write_videofile(args.out_filename)
-
-            # tmp_frame_dir = osp.dirname(frame_paths[0])
-            # shutil.rmtree(tmp_frame_dir)
-
 
 
 if __name__ == '__main__':
