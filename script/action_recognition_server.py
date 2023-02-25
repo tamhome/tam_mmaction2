@@ -89,7 +89,7 @@ class MMActionServer(Node):
         self.action_recog_step = 3  # n回に一回だけ認識する
 
         self.description = description.load_robot_description()
-        self.io_path = roslib.packages.get_pkg_dir("tam_mmaction_pkg") + "/io/"
+        self.io_path = roslib.packages.get_pkg_dir("tam_mmaction2") + "/io/"
         self.device = "cuda:0"
 
         self.short_side = 480
