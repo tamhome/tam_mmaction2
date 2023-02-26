@@ -3,9 +3,6 @@
 
 # Copyright (c) OpenMMLab. All rights reserved.
 
-# import os.path as osp
-# import shutil
-
 import os
 import cv2
 import copy as cp
@@ -38,11 +35,6 @@ except (ImportError, ModuleNotFoundError):
     raise ImportError('Failed to import `inference_top_down_pose_model`, '
                       '`init_pose_model`, and `vis_pose_result` form '
                       '`mmpose.apis`. These apis are required in this demo! ')
-
-# try:
-#     import moviepy.editor as mpy
-# except ImportError:
-#     raise ImportError('Please install moviepy to enable output file')
 
 # rosに関連するインポート
 # import tamlib
@@ -126,14 +118,6 @@ class MMActionServer(Node):
         self.det_config = self.io_path + "human_detection/configs/yolox_tiny_8x8_300e_coco.py"
         self.det_checkpoint = self.io_path + "human_detection/pths/yolox_tiny_8x8_300e_coco_20211124_171234-b4047906.pth"
         self.det_model = init_detector(self.det_config, self.det_checkpoint, self.device)
-        # 量子化モデルを読み込む
-        # self.det_deploy_cfg_path = self.io_path + "human_detection/configs/detection_onnxruntime_static.py"
-        # self.det_onnx_pth = self.io_path + "human_detection/pths/end2end.onnx"
-
-        # self.det_deploy_cfg, self.det_model_cfg = load_config(self.det_deploy_cfg_path, self.det_config)
-        # self.task_processor = build_task_processor(self.det_config, self.det_deploy_cfg, self.device)
-        # self.det_model = self.task_processor.init_backend_model(self.det_model)
-
         assert self.det_model.CLASSES[0] == 'person', ('We require you to use a detector trained on COCO')
 
         # 骨格推定に関するパラメータ
@@ -227,23 +211,11 @@ class MMActionServer(Node):
         # self.pub_register("people_poses_publisher", "/mmaction2/poses", Ax3DPoseArray, queue_size=1)
         # self.pub_register("poses_publisher", "/mmaction2/poses", Ax3DPose, queue_size=1)
 
-        # self.sub_register("hsr_head_img_msg", self.description.topic.head_rgbd.rgb_compressed, queue_size=1, callback_func=self.run)
-
     def __del__(self):
         """
         デストラクタ
         """
         self.loginfo("delete: tam_mmaction_recognition")
-
-    # def cb_sub_camera_info(self, camera_info_msg) -> bool:
-    #     """
-    #     カメラインフォのサブスクライブ関数
-    #     """
-    #     # self.camera_info = camera_info_msg.data
-    #     self.cam_model = image_geometry.PinholeCameraModel()
-    #     self.cam_model.fromCameraInfo(camera_info_msg)
-
-    #     return True
 
     def load_label_map(self, file_path):
         """Load Label Map.
@@ -272,21 +244,6 @@ class MMActionServer(Node):
         d = [dict(bbox=x) for x in list(det_result)]
         pose = inference_top_down_pose_model(self.pose_model, cv_img, d, format='xyxy')[0]
         return pose
-
-    # def rgb_based_action_recognition(self):
-    #     rgb_config = mmcv.Config.fromfile(args.rgb_config)
-    #     rgb_config.model.backbone.pretrained = None
-    #     rgb_model = build_recognizer(
-    #         rgb_config.model, test_cfg=rgb_config.get('test_cfg'))
-    #     load_checkpoint(rgb_model, args.rgb_checkpoint, map_location='cpu')
-    #     rgb_model.cfg = rgb_config
-    #     rgb_model.to(args.device)
-    #     rgb_model.eval()
-    #     action_results = inference_recognizer(
-    #         rgb_model, args.video, label_path=args.label_map)
-    #     rgb_action_result = action_results[0][0]
-    #     label_map = [x.strip() for x in open(args.label_map).readlines()]
-    #     return label_map[rgb_action_result]
 
     def detection_inference(self, cv_img):
         """Detect human boxes given frame paths.
