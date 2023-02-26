@@ -240,7 +240,7 @@ class MMActionServer(Node):
         Returns:
             骨格推定の情報
         """
-        self.loginfo("pose estimation start")
+        self.logdebug("pose estimation start")
         d = [dict(bbox=x) for x in list(det_result)]
         pose = inference_top_down_pose_model(self.pose_model, cv_img, d, format='xyxy')[0]
         return pose
@@ -347,7 +347,7 @@ class MMActionServer(Node):
 
         predictions = []
 
-        self.loginfo('Performing SpatioTemporal Action Detection for each clip')
+        self.logdebug('Performing SpatioTemporal Action Detection for each clip')
 
         try:
             proposal = human_detections[self.predict_stepsize - 1]
@@ -400,7 +400,7 @@ class MMActionServer(Node):
         annotation = annotations[0]
         img = vis_pose_result(self.pose_model, img, pose_results)
         for ann in annotation:
-            self.loginfo("make action recognition result image.")
+            self.logdebug("make action recognition result image.")
             box = ann[0]
             label = ann[1]
             if not len(label):
@@ -511,7 +511,7 @@ class MMActionServer(Node):
 
             # 規定の枚数溜まっていたら，最新の結果を入れてからアクション認識を行う
             elif len(self.frames) == self.predict_stepsize:
-                self.loginfo("start action recognition with FIFO")
+                self.logdebug("start action recognition with FIFO")
                 self.human_detections_list.pop(0)
                 self.frames.pop(0)
 
