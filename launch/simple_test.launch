@@ -1,6 +1,6 @@
 <launch>
     <!-- Hyperparameter -->
-    <arg name="map_name" default="rtabmap"/>
+    <arg name="map_name" default="hma_wrs"/>
     <arg name="simulator" default="false"/>
 
     <!-- offline slam -->
@@ -8,13 +8,14 @@
         <arg name="use_sim_time"  default="$(arg simulator)"/>
         <arg name="database_path" default="$(find tam_slam)/map/$(arg map_name).db"/>
         <arg name="localization"  default="true"/>
+        <arg name="rviz"  default="false"/>
     </include>
 
     <!-- action recognition -->
     <node pkg="tam_mmaction2" type="action_recognition_server.py" name="action_recognition_server" output="screen">
     </node>
     
-    <node pkg="rviz" type="rviz" name="rviz" args="-d $(find tam_mmaction2)/io/rviz/action_recognition.rviz"/>
+    <node pkg="rviz" type="rviz" name="rviz_pose_result" args="-d $(find tam_mmaction2)/io/rviz/action_recognition.rviz"/>
 
 </launch>
 
