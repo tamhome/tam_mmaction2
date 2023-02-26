@@ -1,0 +1,9 @@
+float32 stand
+float32 walk
+float32 run
+float32 jump
+float32 sit
+float32 squat
+float32 kick
+float32 punch
+float32 wave

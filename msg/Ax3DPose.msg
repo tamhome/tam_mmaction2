@@ -1,0 +1,20 @@
+hma_ailia_msgs/AxKeyPoint nose
+hma_ailia_msgs/AxKeyPoint shoulder_center
+hma_ailia_msgs/AxKeyPoint shoulder_right
+hma_ailia_msgs/AxKeyPoint elbow_right
+hma_ailia_msgs/AxKeyPoint wrist_right
+hma_ailia_msgs/AxKeyPoint shoulder_left
+hma_ailia_msgs/AxKeyPoint elbow_left
+hma_ailia_msgs/AxKeyPoint wrist_left
+hma_ailia_msgs/AxKeyPoint hip_right
+hma_ailia_msgs/AxKeyPoint knee_right
+hma_ailia_msgs/AxKeyPoint ankle_right
+hma_ailia_msgs/AxKeyPoint hip_left
+hma_ailia_msgs/AxKeyPoint knee_left
+hma_ailia_msgs/AxKeyPoint ankle_left
+hma_ailia_msgs/AxKeyPoint eye_right
+hma_ailia_msgs/AxKeyPoint eye_left
+hma_ailia_msgs/AxKeyPoint ear_right
+hma_ailia_msgs/AxKeyPoint ear_left
+hma_ailia_msgs/AxKeyPoint body_center
+
