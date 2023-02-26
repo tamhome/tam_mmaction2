@@ -7,6 +7,7 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   std_msgs
   geometry_msgs
+  message_runtime
   message_generation
   actionlib_msgs
 )
@@ -18,11 +19,10 @@ find_package(catkin REQUIRED COMPONENTS
 ## Generate messages in the 'msg' folder
 add_message_files(
   FILES
-  Ax3DPose.msg
-  Ax3DPoseArray.msg
-  AxActionRecognition.msg
   AxKeyPoint.msg
-  ActionList.msg
+  Ax3DPose.msg
+  Ax3DPoseWithLabel.msg
+  Ax3DPoseWithLabelArray.msg
 )
 
 ## Generate services in the 'srv' folder
@@ -33,9 +33,17 @@ add_message_files(
 # )
 
 ## Generate actions in the 'action' folder
-add_action_files(
-  FILES
-  AxActionRecognition.action
+# add_action_files(
+#   FILES
+#   AxActionRecognition.action
+# )
+
+generate_messages(
+  DEPENDENCIES
+  std_msgs
+  sensor_msgs
+  geometry_msgs
+  actionlib_msgs
 )
 
 ################################################

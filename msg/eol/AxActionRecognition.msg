@@ -5,7 +5,7 @@ int32 amount
 string[] action
 string[] person
 float32[] score
-hma_ailia_msgs/ActionList[] scores
+tam_mmaction2/ActionList[] scores
 int32[] x
 int32[] y
 int32[] w
