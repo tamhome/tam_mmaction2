@@ -191,7 +191,7 @@ class MMActionServer(Node):
         self.sync_sub_register("rgbd", topics, callback_func=self.run)
         # self.sub_register("camera_info", self.description.topic.head_rgbd.camera_info, queue_size=1, callback_func=self.cb_sub_camera_info)
 
-        # カメラインフォを購読する
+        # カメラインフォを一度だけサブすくライブする
         camera_info_msg = rospy.wait_for_message(self.description.topic.head_rgbd.camera_info, CameraInfo)
         self.cam_model = image_geometry.PinholeCameraModel()
         self.cam_model.fromCameraInfo(camera_info_msg)
@@ -456,7 +456,7 @@ class MMActionServer(Node):
         """
         アクション認識を行う関数
         """
-        self.loginfo("start human detection")
+        self.logdebug("start human detection")
         self.cv_img = self.tam_cv_bridge.compressed_imgmsg_to_cv2(img_msg)
         self.depth_img = self.tam_cv_bridge.compressed_imgmsg_to_depth(depth_msg)
 
@@ -465,6 +465,7 @@ class MMActionServer(Node):
 
         # 骨格推定を行う
         if self.is_skeleton_recog:
+            self.logdebug("start keypoint estimation")
             pose_results = self.pose_inference(self.cv_img, human_detections)
             vis_pose_img = vis_pose_result(self.pose_model, self.cv_img.copy(), pose_results)
             pose_results_msg = self.tam_cv_bridge.cv2_to_imgmsg(vis_pose_img)
@@ -473,7 +474,7 @@ class MMActionServer(Node):
             # 人のごとに3次元座標を算出しマーカーに出力する
             people_keypoints_3d = []
             for poses in pose_results:
-                # キーポイントごとの3次元座標を算出する
+                self.logdebug("キーポイントごとの3次元座標を算出する")
                 key_points = poses["keypoints"]
                 keypoints_3d = []
                 for key_point in key_points:
@@ -495,6 +496,7 @@ class MMActionServer(Node):
 
         # アクション認識を行う
         if self.is_action_recogniion:
+            self.logdebug("start action recognition")
             # resize frames to shortside 256
             new_w, new_h = mmcv.rescale_size((self.img_w, self.img_h), (256, np.Inf))
             new_img = mmcv.imresize(self.cv_img, (new_w, new_h))
@@ -551,7 +553,7 @@ class MMActionServer(Node):
             # キーポイントベースではない処理
             else:
                 temp_human_detections_list = cp.deepcopy(self.human_detections_list)
-                self.loginfo('Use rgb-based SpatioTemporal Action Detection')
+                self.logdebug('Use rgb-based SpatioTemporal Action Detection')
                 for i in range(len(temp_human_detections_list)):
                     det = temp_human_detections_list[i]
                     det[:, 0:4:2] *= w_ratio
@@ -565,6 +567,7 @@ class MMActionServer(Node):
 
             # アクション認識の結果がある場合
             else:
+                self.logdebug("キーポイントとアクション認識の結果を可視化する")
                 stdet_results = []
                 timestamps = [self.predict_stepsize]
                 for timestamp, prediction in zip(timestamps, stdet_preds):
@@ -575,8 +578,6 @@ class MMActionServer(Node):
 
             self.result_action_msg = self.tam_cv_bridge.cv2_to_imgmsg(cv_result)
             self.pub.result_action.publish(self.result_action_msg)
-
-            # temp_human_detections_list = []
 
             return True
 
