@@ -12,24 +12,22 @@
   - [slowfast-temporal-max](https://download.openmmlab.com/mmaction/detection/ava/slowfast_temporal_max_focal_alpha3_gamma1_kinetics_pretrained_r50_8x8x1_cosine_10e_ava22_rgb/slowfast_temporal_max_focal_alpha3_gamma1_kinetics_pretrained_r50_8x8x1_cosine_10e_ava22_rgb-345618cd.pth)
 
 ## 環境構築
-- mmpose, mmdetをインストールすると，mmcv-fullのバージョンを落とされるので上げる
 
-```
-pip install openmim
+- mmpose, mmdetをインストールすると，mmcv-fullのバージョンを落とされることがある(?)
+  - その場合はmmcv-full==1.7.0を再度インストールする必要あり
+  - 公式にしたがって，`mim install mm...`を使用すると， `mmcv-full`のバージョンが下げられるが，`pip install mm...`を使うと問題ない
+  - 同様に，`mim install mm...`を使用すると`numpy`のバージョンを下げられることがあるので，その都度`pip install numpy --upgrade`で最新版にする
+
+```bash
 MMCV_WITH_OPS=1 FORCE_CUDA=1 pip install mmcv-full==1.7.0
-mim install mmdet
-MMCV_WITH_OPS=1 FORCE_CUDA=1 pip install mmcv-full==1.7.0
-mim install mmpose  # optional
-git clone https://github.com/open-mmlab/mmaction2.git
-MMCV_WITH_OPS=1 FORCE_CUDA=1 pip install mmcv-full==1.7.0
-cd mmaction2
-pip install .
-pip install numpy --upgrade
-pip install moviepy
+pip install mmdet==2.28.1
+pip install mmpose==0.29.0
+pip install mmaction2==0.24.1
 ```
 
 ### install ros
-```
+
+```bash
 apt install curl
 sh -c 'echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list'
 curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | apt-key add -
@@ -38,19 +36,28 @@ apt update
 
 ## cuda関連で困ったときの参考書
 
-- https://mmdetection.readthedocs.io/en/v2.9.0/faq.html
+- <https://mmdetection.readthedocs.io/en/v2.9.0/faq.html>
 
 ## 環境構築ができているかのテスト用
 
 - mm系のすべてのパッケージに，インストールがどんな状況になっているかを可視化するコードがある．
-```
+  - 対応するgitのパッケージを落とす必要あり
+
+```bash
+python mmdet/utils/collect_env.py
 python mmaction/utils/collect_env.py
 ```
 
+- 出力
+- ![mmdet_result](./assets/setup/Screenshot%20from%202023-02-27%2004-09-03.png)
+- 左下の部分の， `MMCV CUDA Compiler: 11.7`のところでバージョンが表示されていればGPU込でインストールされている
+  - `Unknown`のような表示の場合は，環境構築に失敗している
+  - 下記コマンドを再度実行してから，もう一度`mmdet`などのインストールに挑戦すること
+    - `MMCV_WITH_OPS=1 FORCE_CUDA=1 pip install mmcv-full==1.7.0`
 
 ## imstall mmdeploy
 
-```
+```bash
 pip install onnxruntime-gpu
 pip install openvino-dev
 ```
