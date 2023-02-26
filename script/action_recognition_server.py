@@ -52,8 +52,13 @@ from tamlib.cv_bridge import CvBridge
 import rospy
 import roslib
 
+from std_msgs.msg import Int32
 from sensor_msgs.msg import CompressedImage, Image, CameraInfo
 from visualization_msgs.msg import Marker, MarkerArray
+from tam_mmaction2.msg import Ax3DPose, AxKeyPoint
+from tam_mmaction2.msg import Ax3DPoseWithLabel, Ax3DPoseWithLabelArray
+# from tam_mmaction2.msg import Ax3DPoseArray, Ax3DPose, AxKeyPoint
+# from tam_mmaction2.msg import AxActionRecognition
 
 
 FONTFACE = cv2.FONT_HERSHEY_DUPLEX
@@ -72,6 +77,24 @@ PLATEBLUE = '03045e-023e8a-0077b6-0096c7-00b4d8-48cae4'
 PLATEBLUE = PLATEBLUE.split('-')
 PLATEBLUE = [hex2color(h) for h in PLATEBLUE]
 
+MM_ACTION_NOSE = 0
+MM_ACTION_LEFT_EYE = 1
+MM_ACTION_RIGHT_EYE = 2
+MM_ACTION_LEFT_EAR = 3
+MM_ACTION_RIGHT_EAR = 4
+MM_ACTION_LEFT_SHOULDER = 5
+MM_ACTION_RIGHT_SHOULDER = 6
+MM_ACTION_LEFT_ELBOW = 7
+MM_ACTION_RIGHT_ELBOW = 8
+MM_ACTION_LEFT_WRIST = 9
+MM_ACTION_RIGHT_WRIST = 10
+MM_ACTION_LEFT_HIP = 11
+MM_ACTION_RIGHT_HIP = 12
+MM_ACTION_LEFT_KNEE = 13
+MM_ACTION_RIGHT_KNEE = 14
+MM_ACTION_LEFT_ANKLE = 15
+MM_ACTION_RIGHT_ANKLE = 16
+
 
 class MMActionServer(Node):
     """
@@ -82,6 +105,7 @@ class MMActionServer(Node):
         super().__init__()
 
         self.mmaction_utils = MMActionUtils()
+        self.key_list = self.mmaction_utils.mm_keypoint_info.keys()
         self.frames = []  # 画像をステップ枚数分保存する
         self.pose_results_list = []  # ステップ枚数分の認識結果を保存する
         self.human_detections_list = []  # ステップ枚数分の認識結果を保存する
@@ -199,6 +223,10 @@ class MMActionServer(Node):
         self.pub_register("result_pose", "/mmaction2/pose_estimation/image", Image, queue_size=1)
         self.pub_register("result_action", "/mmaction2/action_estimation/image", Image, queue_size=1)
         self.pub_register("result_skeleton", "/mmaction2/action_estimation/skeleton", MarkerArray, queue_size=1)
+        self.pub_register("people_poses_publisher", "/mmaction2/poses/with_label", Ax3DPoseWithLabelArray, queue_size=1)
+        # self.pub_register("people_poses_publisher", "/mmaction2/poses", Ax3DPoseArray, queue_size=1)
+        # self.pub_register("poses_publisher", "/mmaction2/poses", Ax3DPose, queue_size=1)
+
         # self.sub_register("hsr_head_img_msg", self.description.topic.head_rgbd.rgb_compressed, queue_size=1, callback_func=self.run)
 
     def __del__(self):
@@ -393,7 +421,7 @@ class MMActionServer(Node):
             name = name[:st] + '...' + name[ed + 1:]
         return name
 
-    def action_result_visualizer(self, img, annotations, labels, pose_results, plate=PLATEBLUE) -> np.array:
+    def action_result_visualizer(self, img, annotations, pose_results, plate=PLATEBLUE) -> np.array:
         h, w, _ = img.shape
         scale_ratio = np.array([w, h, w, h])
 
@@ -470,19 +498,76 @@ class MMActionServer(Node):
             vis_pose_img = vis_pose_result(self.pose_model, self.cv_img.copy(), pose_results)
             pose_results_msg = self.tam_cv_bridge.cv2_to_imgmsg(vis_pose_img)
             self.pub.result_pose.publish(pose_results_msg)
+            people_keypoints_3d = []  # 複数人分のキーポイント
 
-            # 人のごとに3次元座標を算出しマーカーに出力する
-            people_keypoints_3d = []
+            # 人ごとに3次元座標を算出しマーカーに出力する
             for poses in pose_results:
                 self.logdebug("キーポイントごとの3次元座標を算出する")
                 key_points = poses["keypoints"]
                 keypoints_3d = []
-                for key_point in key_points:
+                msg_pose_3d = Ax3DPose()  # 1人分の3次元キーポイント座標
+                array_msg_pose_3d = []  # publish用のデータはあとで作成するため，配列に一時保存する
+                for id, key_point in enumerate(key_points):
+                    # 3次元座標算出
                     keypoint_3d = self.mmaction_utils.pixelTo3D(key_point, self.depth_img.copy(), camera_model=self.cam_model)
                     keypoints_3d.append(keypoint_3d)
 
-                # 一人分のキーポイントの座標を順番に格納
+                    # rosにpublishするようのメッセージを作成
+                    msg_keypoint_3d = AxKeyPoint()  # 3次元座標と信頼値を入れる
+
+                    # 3次元座標が算出されたとき
+                    if keypoint_3d:
+                        msg_keypoint_3d.point = keypoint_3d["point"]
+                        msg_keypoint_3d.score = keypoint_3d["conf"]
+                    else:
+                        # 算出できなかったときは信頼値を-1にする
+                        # msg_keypoint_3d.point = Point(0, 0, 0)
+                        msg_keypoint_3d.score = -1
+
+                    # キーポイントの3次元座標を適切なメッセージの場所に格納
+                    if id == MM_ACTION_NOSE:
+                        msg_pose_3d.nose = msg_keypoint_3d
+                    elif id == MM_ACTION_LEFT_EYE:
+                        msg_pose_3d.left_eye = msg_keypoint_3d
+                    elif id == MM_ACTION_RIGHT_EYE:
+                        msg_pose_3d.right_eye = msg_keypoint_3d
+                    elif id == MM_ACTION_LEFT_EAR:
+                        msg_pose_3d.left_ear = msg_keypoint_3d
+                    elif id == MM_ACTION_RIGHT_EAR:
+                        msg_pose_3d.right_ear = msg_keypoint_3d
+                    elif id == MM_ACTION_LEFT_SHOULDER:
+                        msg_pose_3d.left_shoulder = msg_keypoint_3d
+                    elif id == MM_ACTION_RIGHT_SHOULDER:
+                        msg_pose_3d.right_shoulder = msg_keypoint_3d
+                    elif id == MM_ACTION_LEFT_ELBOW:
+                        msg_pose_3d.left_elbow = msg_keypoint_3d
+                    elif id == MM_ACTION_RIGHT_ELBOW:
+                        msg_pose_3d.right_elbow = msg_keypoint_3d
+                    elif id == MM_ACTION_LEFT_WRIST:
+                        msg_pose_3d.left_wrist = msg_keypoint_3d
+                    elif id == MM_ACTION_RIGHT_WRIST:
+                        msg_pose_3d.right_wrist = msg_keypoint_3d
+                    elif id == MM_ACTION_LEFT_HIP:
+                        msg_pose_3d.left_hip = msg_keypoint_3d
+                    elif id == MM_ACTION_RIGHT_HIP:
+                        msg_pose_3d.right_hip = msg_keypoint_3d
+                    elif id == MM_ACTION_LEFT_KNEE:
+                        msg_pose_3d.left_knee = msg_keypoint_3d
+                    elif id == MM_ACTION_RIGHT_KNEE:
+                        msg_pose_3d.right_knee = msg_keypoint_3d
+                    elif id == MM_ACTION_LEFT_ANKLE:
+                        msg_pose_3d.left_ankle = msg_keypoint_3d
+                    elif id == MM_ACTION_RIGHT_ANKLE:
+                        msg_pose_3d.right_ankle = msg_keypoint_3d
+
                 people_keypoints_3d.append(keypoints_3d)
+                array_msg_pose_3d.append(msg_pose_3d)
+                # msg_people_keypoints_3d.append(msg_pose_3d)
+
+            # 全員分のキーポイントを算出した後で，複数人のキーポイントをまとめてパブリッシュする
+            # msg_ax_pose_3d_array.header.stamp = rospy.Time.now()
+            # msg_ax_pose_3d_array.people = msg_people_keypoints_3d
+            # self.pub.people_poses_publisher.publish(msg_ax_pose_3d_array)
 
             marker_array = self.mmaction_utils.display3DPose(people_keypoints_3d, frame=self.camera_frame)
             self.pub.result_skeleton.publish(marker_array)
@@ -561,6 +646,36 @@ class MMActionServer(Node):
                     temp_human_detections_list[i] = torch.from_numpy(det[:, :4]).to(self.device)
                 timestamps, stdet_preds = self.rgb_based_stdet(cp.copy(self.frames), self.stdet_label_map, temp_human_detections_list, self.img_w, self.img_h, new_w, new_h, w_ratio, h_ratio)
 
+            self.logdebug("ラベル付きのアクション認識結果をパブリッシュするための準備")
+            msg_pose3d_with_label_array = Ax3DPoseWithLabelArray()
+            msg_pose3d_with_label_array.header.stamp = rospy.Time.now()
+            people_msg_array = []  # メッセージを集約するための配列
+
+            try:
+                for human_id, cv_human_pos in enumerate(human_detections):
+                    self.logdebug("一人分のラベル付き認識結果を作成")
+                    id_hand_wave = 0
+                    # rosでpublishするデータを作成
+                    # print(stdet_preds[human_id][0][id_hand_wave][1])  # 2番目の0がラベルリストに相当する
+                    msg_pose_3d_with_label = Ax3DPoseWithLabel()
+                    msg_pose_3d_with_label.keypoints = array_msg_pose_3d[human_id]
+                    msg_pose_3d_with_label.x = int(cv_human_pos[0])
+                    msg_pose_3d_with_label.y = int(cv_human_pos[1])
+                    msg_pose_3d_with_label.h = int(cv_human_pos[2] - cv_human_pos[0])
+                    msg_pose_3d_with_label.w = int(cv_human_pos[3] - cv_human_pos[1])
+                    msg_pose_3d_with_label.score = [stdet_preds[human_id][0][id_hand_wave][1]]
+                    people_msg_array.append(msg_pose_3d_with_label)
+
+            except IndexError as e:
+                self.logerr(e)
+                self.logwarn("インデックスがあっていなかったため，そのデータを破棄")
+
+            self.logdebug("全員分のラベル付きデータの作成完了")
+            self.logdebug("rosを介してpublishする")
+
+            msg_pose3d_with_label_array.people = people_msg_array
+            self.pub.people_poses_publisher.publish(msg_pose3d_with_label_array)
+
             # アクション認識の結果がない場合
             if timestamps is None and stdet_preds is None:
                 cv_result = self.cv_img
@@ -574,7 +689,7 @@ class MMActionServer(Node):
                     human_detection = temp_human_detections_list[timestamp - 1]
                     stdet_results.append(self.pack_result(human_detection, prediction, new_h, new_w))
 
-                cv_result = self.action_result_visualizer(self.cv_img, stdet_results, stdet_preds, pose_results)
+                cv_result = self.action_result_visualizer(self.cv_img, stdet_results, pose_results)
 
             self.result_action_msg = self.tam_cv_bridge.cv2_to_imgmsg(cv_result)
             self.pub.result_action.publish(self.result_action_msg)
