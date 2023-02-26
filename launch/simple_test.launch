@@ -1,15 +1,18 @@
 <launch>
     <!-- Hyperparameter -->
     <arg name="map_name" default="hma_wrs"/>
+    <arg name="rtabmap" default="false"/>
     <arg name="simulator" default="false"/>
 
     <!-- offline slam -->
-    <include file="$(find tam_slam)/launch/include/rtabmap.launch">
-        <arg name="use_sim_time"  default="$(arg simulator)"/>
-        <arg name="database_path" default="$(find tam_slam)/map/$(arg map_name).db"/>
-        <arg name="localization"  default="true"/>
-        <arg name="rviz"  default="false"/>
-    </include>
+    <group if="$(arg rtabmap)">
+        <include file="$(find tam_slam)/launch/include/rtabmap.launch">
+            <arg name="use_sim_time"  default="$(arg simulator)"/>
+            <arg name="database_path" default="$(find tam_slam)/map/$(arg map_name).db"/>
+            <arg name="localization"  default="true"/>
+            <arg name="rviz"  default="false"/>
+        </include>
+    </group>
 
     <!-- action recognition -->
     <node pkg="tam_mmaction2" type="action_recognition_server.py" name="action_recognition_server" output="screen">
