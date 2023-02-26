@@ -21,7 +21,7 @@ class MMActionUtils(Logger):
         keypointの情報などを初期化
         """
 
-        super().__init__(loglevel="DEBUG")
+        super().__init__(loglevel="INFO")
         self.loginfo("set keypoint information")
 
         self.mm_keypoint_info = {
@@ -128,7 +128,7 @@ class MMActionUtils(Logger):
 
         return {"point": Point(uv[0] + self._p_offset_x, uv[1] + self._p_offset_y, uv[2] + self._p_offset_z), "conf": confidence}
 
-    def createMarker(self, frame_id, ns, marker_id, keypoint_3d, person, point1, point2):
+    def createMarker(self, frame_id, ns, marker_id, keypoint_3d, person, point1, point2) -> Marker:
         """
         2つのポイントから描画用のマーカーを作成する関数
         """

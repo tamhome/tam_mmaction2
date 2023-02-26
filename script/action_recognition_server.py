@@ -10,9 +10,8 @@ import mmcv
 import numpy as np
 import torch
 import image_geometry
-# from mmcv import DictAction
 from mmcv.runner import load_checkpoint
-from mmaction.models import build_detector, build_model, build_recognizer
+from mmaction.models import build_detector
 from action_recognition_utils import MMActionUtils
 
 # from mmaction.apis import inference_recognizer, init_recognizer
@@ -44,7 +43,7 @@ from tamlib.cv_bridge import CvBridge
 import rospy
 import roslib
 
-from std_msgs.msg import Int32
+# from std_msgs.msg import Int32
 from sensor_msgs.msg import CompressedImage, Image, CameraInfo
 from visualization_msgs.msg import Marker, MarkerArray
 from tam_mmaction2.msg import Ax3DPose, AxKeyPoint
@@ -52,22 +51,11 @@ from tam_mmaction2.msg import Ax3DPoseWithLabel, Ax3DPoseWithLabelArray
 # from tam_mmaction2.msg import Ax3DPoseArray, Ax3DPose, AxKeyPoint
 # from tam_mmaction2.msg import AxActionRecognition
 
-
 FONTFACE = cv2.FONT_HERSHEY_DUPLEX
 FONTSCALE = 0.75
 FONTCOLOR = (255, 255, 255)  # BGR, white
 THICKNESS = 1
 LINETYPE = 1
-
-
-def hex2color(h):
-    """Convert the 6-digit hex string to tuple of 3 int value (RGB)"""
-    return (int(h[:2], 16), int(h[2:4], 16), int(h[4:], 16))
-
-
-PLATEBLUE = '03045e-023e8a-0077b6-0096c7-00b4d8-48cae4'
-PLATEBLUE = PLATEBLUE.split('-')
-PLATEBLUE = [hex2color(h) for h in PLATEBLUE]
 
 MM_ACTION_NOSE = 0
 MM_ACTION_LEFT_EYE = 1
@@ -183,7 +171,6 @@ class MMActionServer(Node):
         self.rgb_stdet_model.eval()
 
         # ROSインタフェース
-
         self.tam_cv_bridge = CvBridge()
         self.camera_info = CameraInfo()
         self.cv_img = None
@@ -378,7 +365,7 @@ class MMActionServer(Node):
             name = name[:st] + '...' + name[ed + 1:]
         return name
 
-    def action_result_visualizer(self, img, annotations, pose_results, plate=PLATEBLUE) -> np.array:
+    def action_result_visualizer(self, img, annotations, pose_results) -> np.array:
         h, w, _ = img.shape
         scale_ratio = np.array([w, h, w, h])
 
@@ -396,7 +383,8 @@ class MMActionServer(Node):
                 box = (box * scale_ratio).astype(np.int64)
                 st, ed = tuple(box[:2]), tuple(box[2:])
                 if not pose_results:
-                    cv2.rectangle(img, st, ed, plate[0], 2)
+                    # cv2.rectangle(img, st, ed, plate[0], 2)
+                    cv2.rectangle(img, st, ed, (255, 50, 50), 2)
             except IndexError as e:
                 self.logerr(e)
 
@@ -410,7 +398,7 @@ class MMActionServer(Node):
                 textwidth = textsize[0]
                 diag0 = (location[0] + textwidth, location[1] - 14)
                 diag1 = (location[0], location[1] + 2)
-                cv2.rectangle(img, diag0, diag1, plate[k + 1], -1)
+                cv2.rectangle(img, diag0, diag1, (255 - (k * 20), 50, 50), -1)
                 cv2.putText(img, text, location, FONTFACE, FONTSCALE, FONTCOLOR, THICKNESS, LINETYPE)
 
         return img
@@ -611,27 +599,27 @@ class MMActionServer(Node):
             try:
                 for human_id, cv_human_pos in enumerate(human_detections):
                     self.logdebug("一人分のラベル付き認識結果を作成")
-                    id_hand_wave = 0
+                    hand_wave_id = 0
                     # rosでpublishするデータを作成
-                    # print(stdet_preds[human_id][0][id_hand_wave][1])  # 2番目の0がラベルリストに相当する
                     msg_pose_3d_with_label = Ax3DPoseWithLabel()
                     msg_pose_3d_with_label.keypoints = array_msg_pose_3d[human_id]
                     msg_pose_3d_with_label.x = int(cv_human_pos[0])
                     msg_pose_3d_with_label.y = int(cv_human_pos[1])
                     msg_pose_3d_with_label.h = int(cv_human_pos[2] - cv_human_pos[0])
                     msg_pose_3d_with_label.w = int(cv_human_pos[3] - cv_human_pos[1])
-                    msg_pose_3d_with_label.score = [stdet_preds[human_id][0][id_hand_wave][1]]
+                    msg_pose_3d_with_label.score = [stdet_preds[human_id][0][hand_wave_id][1]]
                     people_msg_array.append(msg_pose_3d_with_label)
 
             except IndexError as e:
-                self.logerr(e)
-                self.logwarn("インデックスがあっていなかったため，そのデータを破棄")
+                self.logdebug(e)
+                self.logdebug("delte current data")
 
-            self.logdebug("全員分のラベル付きデータの作成完了")
-            self.logdebug("rosを介してpublishする")
-
+            # publish data with label
+            self.logdebug("complete calc all person data")
             msg_pose3d_with_label_array.people = people_msg_array
             self.pub.people_poses_publisher.publish(msg_pose3d_with_label_array)
+
+            # 可視化用画像の作成とpub
 
             # アクション認識の結果がない場合
             if timestamps is None and stdet_preds is None:
