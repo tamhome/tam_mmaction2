@@ -1,0 +1,18 @@
+tam_mmaction2/AxKeyPoint nose
+tam_mmaction2/AxKeyPoint left_eye
+tam_mmaction2/AxKeyPoint right_eye
+tam_mmaction2/AxKeyPoint left_ear
+tam_mmaction2/AxKeyPoint right_ear
+tam_mmaction2/AxKeyPoint left_shoulder
+tam_mmaction2/AxKeyPoint right_shoulder
+tam_mmaction2/AxKeyPoint left_elbow
+tam_mmaction2/AxKeyPoint right_elbow
+tam_mmaction2/AxKeyPoint left_wrist
+tam_mmaction2/AxKeyPoint right_wrist
+tam_mmaction2/AxKeyPoint left_hip
+tam_mmaction2/AxKeyPoint right_hip
+tam_mmaction2/AxKeyPoint left_knee
+tam_mmaction2/AxKeyPoint right_knee
+tam_mmaction2/AxKeyPoint left_ankle
+tam_mmaction2/AxKeyPoint right_ankle
+

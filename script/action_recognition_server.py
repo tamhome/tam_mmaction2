@@ -2,24 +2,23 @@
 # -*- coding: utf-8 -*-
 
 # Copyright (c) OpenMMLab. All rights reserved.
-import os
-import os.path as osp
-import shutil
 
+import os
 import cv2
 import copy as cp
 import mmcv
 import numpy as np
 import torch
-# from mmcv import DictAction
+import image_geometry
 from mmcv.runner import load_checkpoint
-from mmaction.models import build_detector, build_model, build_recognizer
+from mmaction.models import build_detector
+from action_recognition_utils import MMActionUtils
 
-from mmaction.apis import inference_recognizer, init_recognizer
-from mmdeploy.apis import build_task_processor
-from mmdeploy.utils.config_utils import load_config
-import onnxruntime
-import onnx
+# from mmaction.apis import inference_recognizer, init_recognizer
+# from mmdeploy.apis import build_task_processor
+# from mmdeploy.utils.config_utils import load_config
+# import onnxruntime
+# import onnx
 # import copy
 
 try:
@@ -36,11 +35,6 @@ except (ImportError, ModuleNotFoundError):
                       '`init_pose_model`, and `vis_pose_result` form '
                       '`mmpose.apis`. These apis are required in this demo! ')
 
-try:
-    import moviepy.editor as mpy
-except ImportError:
-    raise ImportError('Please install moviepy to enable output file')
-
 # rosに関連するインポート
 # import tamlib
 from tamlib.node_template import Node
@@ -49,8 +43,13 @@ from tamlib.cv_bridge import CvBridge
 import rospy
 import roslib
 
-from sensor_msgs.msg import CompressedImage, Image
-
+# from std_msgs.msg import Int32
+from sensor_msgs.msg import CompressedImage, Image, CameraInfo
+from visualization_msgs.msg import Marker, MarkerArray
+from tam_mmaction2.msg import Ax3DPose, AxKeyPoint
+from tam_mmaction2.msg import Ax3DPoseWithLabel, Ax3DPoseWithLabelArray
+# from tam_mmaction2.msg import Ax3DPoseArray, Ax3DPose, AxKeyPoint
+# from tam_mmaction2.msg import AxActionRecognition
 
 FONTFACE = cv2.FONT_HERSHEY_DUPLEX
 FONTSCALE = 0.75
@@ -58,15 +57,23 @@ FONTCOLOR = (255, 255, 255)  # BGR, white
 THICKNESS = 1
 LINETYPE = 1
 
-
-def hex2color(h):
-    """Convert the 6-digit hex string to tuple of 3 int value (RGB)"""
-    return (int(h[:2], 16), int(h[2:4], 16), int(h[4:], 16))
-
-
-PLATEBLUE = '03045e-023e8a-0077b6-0096c7-00b4d8-48cae4'
-PLATEBLUE = PLATEBLUE.split('-')
-PLATEBLUE = [hex2color(h) for h in PLATEBLUE]
+MM_ACTION_NOSE = 0
+MM_ACTION_LEFT_EYE = 1
+MM_ACTION_RIGHT_EYE = 2
+MM_ACTION_LEFT_EAR = 3
+MM_ACTION_RIGHT_EAR = 4
+MM_ACTION_LEFT_SHOULDER = 5
+MM_ACTION_RIGHT_SHOULDER = 6
+MM_ACTION_LEFT_ELBOW = 7
+MM_ACTION_RIGHT_ELBOW = 8
+MM_ACTION_LEFT_WRIST = 9
+MM_ACTION_RIGHT_WRIST = 10
+MM_ACTION_LEFT_HIP = 11
+MM_ACTION_RIGHT_HIP = 12
+MM_ACTION_LEFT_KNEE = 13
+MM_ACTION_RIGHT_KNEE = 14
+MM_ACTION_LEFT_ANKLE = 15
+MM_ACTION_RIGHT_ANKLE = 16
 
 
 class MMActionServer(Node):
@@ -76,11 +83,9 @@ class MMActionServer(Node):
 
     def __init__(self) -> None:
         super().__init__()
-        self.tam_cv_bridge = CvBridge()
-        self.cv_img = None
-        self.hsr_head_img_msg = CompressedImage()
-        self.result_action_msg = Image()
 
+        self.mmaction_utils = MMActionUtils()
+        self.key_list = self.mmaction_utils.mm_keypoint_info.keys()
         self.frames = []  # 画像をステップ枚数分保存する
         self.pose_results_list = []  # ステップ枚数分の認識結果を保存する
         self.human_detections_list = []  # ステップ枚数分の認識結果を保存する
@@ -101,14 +106,6 @@ class MMActionServer(Node):
         self.det_config = self.io_path + "human_detection/configs/yolox_tiny_8x8_300e_coco.py"
         self.det_checkpoint = self.io_path + "human_detection/pths/yolox_tiny_8x8_300e_coco_20211124_171234-b4047906.pth"
         self.det_model = init_detector(self.det_config, self.det_checkpoint, self.device)
-        # 量子化モデルを読み込む
-        # self.det_deploy_cfg_path = self.io_path + "human_detection/configs/detection_onnxruntime_static.py"
-        # self.det_onnx_pth = self.io_path + "human_detection/pths/end2end.onnx"
-
-        # self.det_deploy_cfg, self.det_model_cfg = load_config(self.det_deploy_cfg_path, self.det_config)
-        # self.task_processor = build_task_processor(self.det_config, self.det_deploy_cfg, self.device)
-        # self.det_model = self.task_processor.init_backend_model(self.det_model)
-
         assert self.det_model.CLASSES[0] == 'person', ('We require you to use a detector trained on COCO')
 
         # 骨格推定に関するパラメータ
@@ -149,13 +146,6 @@ class MMActionServer(Node):
             pass
 
         self.val_pipeline = self.rgb_stdet_config.data.val.pipeline
-        # sampler = [x for x in val_pipeline if x['type'] == 'SampleAVAFrames'][0]
-        # clip_len, frame_interval = sampler['clip_len'], sampler['frame_interval']
-        # assert clip_len % 2 == 0, 'We would like to have an even clip_len'
-
-        # window_size = clip_len * frame_interval
-        # num_frame = self.action_recog_step
-        # self.timestamps = np.arange(window_size // 2, num_frame + 1 - window_size // 2, self.action_recog_step)
 
         # Get img_norm_cfg
         self.img_norm_cfg = self.rgb_stdet_config['img_norm_cfg']
@@ -181,11 +171,37 @@ class MMActionServer(Node):
         self.rgb_stdet_model.eval()
 
         # ROSインタフェース
+        self.tam_cv_bridge = CvBridge()
+        self.camera_info = CameraInfo()
+        self.cv_img = None
+        self.hsr_head_img_msg = CompressedImage()
+        self.hsr_head_depth_msg = CompressedImage()
+        self.result_action_msg = Image()
+
+        self.camera_frame = self.description.frame.rgbd
+
+        p_rgb_topic = self.description.topic.head_rgbd.rgb_compressed
+        p_depth_topic = self.description.topic.head_rgbd.depth_compressed
+        topics = {"hsr_head_img_msg": p_rgb_topic, "hsr_head_depth_msg": p_depth_topic}
+        self.sync_sub_register("rgbd", topics, callback_func=self.run)
+        # self.sub_register("camera_info", self.description.topic.head_rgbd.camera_info, queue_size=1, callback_func=self.cb_sub_camera_info)
+
+        # カメラインフォを一度だけサブすくライブする
+        camera_info_msg = rospy.wait_for_message(self.description.topic.head_rgbd.camera_info, CameraInfo)
+        self.cam_model = image_geometry.PinholeCameraModel()
+        self.cam_model.fromCameraInfo(camera_info_msg)
+
         self.pub_register("result_pose", "/mmaction2/pose_estimation/image", Image, queue_size=1)
         self.pub_register("result_action", "/mmaction2/action_estimation/image", Image, queue_size=1)
-        self.sub_register("hsr_head_img_msg", self.description.topic.head_rgbd.rgb_compressed, queue_size=1, callback_func=self.run)
+        self.pub_register("result_skeleton", "/mmaction2/action_estimation/skeleton", MarkerArray, queue_size=1)
+        self.pub_register("people_poses_publisher", "/mmaction2/poses/with_label", Ax3DPoseWithLabelArray, queue_size=1)
+        # self.pub_register("people_poses_publisher", "/mmaction2/poses", Ax3DPoseArray, queue_size=1)
+        # self.pub_register("poses_publisher", "/mmaction2/poses", Ax3DPose, queue_size=1)
 
     def __del__(self):
+        """
+        デストラクタ
+        """
         self.loginfo("delete: tam_mmaction_recognition")
 
     def load_label_map(self, file_path):
@@ -211,25 +227,10 @@ class MMActionServer(Node):
         Returns:
             骨格推定の情報
         """
-        self.loginfo("pose estimation start")
+        self.logdebug("pose estimation start")
         d = [dict(bbox=x) for x in list(det_result)]
         pose = inference_top_down_pose_model(self.pose_model, cv_img, d, format='xyxy')[0]
         return pose
-
-    # def rgb_based_action_recognition(self):
-    #     rgb_config = mmcv.Config.fromfile(args.rgb_config)
-    #     rgb_config.model.backbone.pretrained = None
-    #     rgb_model = build_recognizer(
-    #         rgb_config.model, test_cfg=rgb_config.get('test_cfg'))
-    #     load_checkpoint(rgb_model, args.rgb_checkpoint, map_location='cpu')
-    #     rgb_model.cfg = rgb_config
-    #     rgb_model.to(args.device)
-    #     rgb_model.eval()
-    #     action_results = inference_recognizer(
-    #         rgb_model, args.video, label_path=args.label_map)
-    #     rgb_action_result = action_results[0][0]
-    #     label_map = [x.strip() for x in open(args.label_map).readlines()]
-    #     return label_map[rgb_action_result]
 
     def detection_inference(self, cv_img):
         """Detect human boxes given frame paths.
@@ -241,20 +242,7 @@ class MMActionServer(Node):
         Returns:
             list[np.ndarray]: The human detection results.
         """
-        # model = init_detector(self.det_config, self.det_checkpoint, self.device)
-        # assert model.CLASSES[0] == 'person', ('We require you to use a detector trained on COCO')
-        # results = []
-        # print('Performing Human Detection for each frame')
-        # prog_bar = mmcv.ProgressBar(len(frame_paths))
-
-        # for frame_path in frame_paths:
-        #     result = inference_detector(self.det_model, frame_path)
-        #     # We only keep human detections with score larger than det_score_thr
-        #     result = result[0][result[0][:, 4] >= self.det_score_thr]
-        #     results.append(result)
-        #     prog_bar.update()
-
-        # rosから取得した画像から
+        # rosから取得した画像から認識を行う
         result = inference_detector(self.det_model, cv_img)
         result = result[0][result[0][:, self.action_topk] >= self.det_score_thr]
 
@@ -321,10 +309,6 @@ class MMActionServer(Node):
     #     return skeleton_action_result
 
     def rgb_based_stdet(self, frames, label_map, human_detections, w, h, new_w, new_h, w_ratio, h_ratio):
-        # rgb_stdet_config = mmcv.Config.fromfile(self.rgb_stdet_config)
-        # rgb_stdet_config.merge_from_dict(self.cfg_options)
-
-        # val_pipeline = self.rgb_stdet_config.data.val.pipeline
         sampler = [x for x in self.val_pipeline if x['type'] == 'SampleAVAFrames'][0]
         clip_len, frame_interval = sampler['clip_len'], sampler['frame_interval']
         assert clip_len % 2 == 0, 'We would like to have an even clip_len'
@@ -333,33 +317,9 @@ class MMActionServer(Node):
         num_frame = len(frames)
         timestamps = np.arange(window_size // 2, num_frame + 1 - window_size // 2, self.predict_stepsize)
 
-        # # Get img_norm_cfg
-        # img_norm_cfg = self.rgb_stdet_config['img_norm_cfg']
-        # if 'to_rgb' not in img_norm_cfg and 'to_bgr' in img_norm_cfg:
-        #     to_bgr = img_norm_cfg.pop('to_bgr')
-        #     img_norm_cfg['to_rgb'] = to_bgr
-        # img_norm_cfg['mean'] = np.array(img_norm_cfg['mean'])
-        # img_norm_cfg['std'] = np.array(img_norm_cfg['std'])
-
-        # Build STDET model
-        # try:
-        #     # In our spatiotemporal detection demo, different actions should have
-        #     # the same number of bboxes.
-        #     self.rgb_stdet_config['model']['test_cfg']['rcnn']['action_thr'] = .0
-        # except KeyError:
-        #     pass
-
-        # self.rgb_stdet_config.model.backbone.pretrained = None
-        # rgb_stdet_model = build_detector(
-        #     self.rgb_stdet_config.model, test_cfg=self.rgb_stdet_config.get('test_cfg'))
-
-        # load_checkpoint(rgb_stdet_model, self.rgb_stdet_checkpoint, map_location='cpu')
-        # rgb_stdet_model.to(self.device)
-        # rgb_stdet_model.eval()
-
         predictions = []
 
-        self.loginfo('Performing SpatioTemporal Action Detection for each clip')
+        self.logdebug('Performing SpatioTemporal Action Detection for each clip')
 
         try:
             proposal = human_detections[self.predict_stepsize - 1]
@@ -370,13 +330,6 @@ class MMActionServer(Node):
             predictions.append(None)
             return None, None
 
-        # start_frame = 5 - (clip_len // 2 - 1) * frame_interval
-        # frame_inds = 0 + np.arange(0, window_size, frame_interval)
-        # frame_inds = list(frame_inds - 1)
-
-        # cv2.imshow("test", imgs[0].astype(np.uint8))
-        # cv2.waitKey(0)
-        # imgs = [frames[ind].astype(np.float32) for ind in frame_inds]
         imgs = [img.astype(np.float32) for img in frames]
         _ = [mmcv.imnormalize_(img, **self.img_norm_cfg) for img in imgs]
         # THWC -> CTHW -> 1CTHW
@@ -399,7 +352,6 @@ class MMActionServer(Node):
                     if result[i][j, 4] > self.action_score_th:
                         prediction[j].append((label_map[i + 1], result[i][j, 4]))
             predictions.append(prediction)
-        # prog_bar.update()
 
         return timestamps, predictions
 
@@ -413,14 +365,14 @@ class MMActionServer(Node):
             name = name[:st] + '...' + name[ed + 1:]
         return name
 
-    def action_result_visualizer(self, img, annotations, labels, pose_results, plate=PLATEBLUE) -> np.array:
+    def action_result_visualizer(self, img, annotations, pose_results) -> np.array:
         h, w, _ = img.shape
         scale_ratio = np.array([w, h, w, h])
 
         annotation = annotations[0]
         img = vis_pose_result(self.pose_model, img, pose_results)
         for ann in annotation:
-            self.loginfo("make action recognition result image.")
+            self.logdebug("make action recognition result image.")
             box = ann[0]
             label = ann[1]
             if not len(label):
@@ -431,7 +383,8 @@ class MMActionServer(Node):
                 box = (box * scale_ratio).astype(np.int64)
                 st, ed = tuple(box[:2]), tuple(box[2:])
                 if not pose_results:
-                    cv2.rectangle(img, st, ed, plate[0], 2)
+                    # cv2.rectangle(img, st, ed, plate[0], 2)
+                    cv2.rectangle(img, st, ed, (255, 50, 50), 2)
             except IndexError as e:
                 self.logerr(e)
 
@@ -445,7 +398,7 @@ class MMActionServer(Node):
                 textwidth = textsize[0]
                 diag0 = (location[0] + textwidth, location[1] - 14)
                 diag1 = (location[0], location[1] + 2)
-                cv2.rectangle(img, diag0, diag1, plate[k + 1], -1)
+                cv2.rectangle(img, diag0, diag1, (255 - (k * 20), 50, 50), -1)
                 cv2.putText(img, text, location, FONTFACE, FONTSCALE, FONTCOLOR, THICKNESS, LINETYPE)
 
         return img
@@ -472,35 +425,99 @@ class MMActionServer(Node):
             results.append((prop.data.cpu().numpy(), [x[0] for x in res], [x[1] for x in res]))
         return results
 
-    def queue(self, src, a):
-        dst = np.roll(src, -1)
-        dst[-1] = a
-        return dst
-
-    def run(self, img_msg):
-
-        # fin_add_flag = False  # 配列への保存方法を管理するためのフラグ
-        # frame_paths, original_frames = frame_extraction(args.video)
-        # num_frame = len(frame_paths)
-        # h, w, _ = original_frames[0].shape
-
-        # Get Human detection results and pose results
-        # self.loginfo("wait compressedImage message")
-        # self.img_msg = rospy.wait_for_message(self.description.topic.head_rgbd.rgb_compressed, CompressedImage)
-        # self.img_msg = rospy.wait_for_message("/camera/rgb/image_raw", Image)
-
-        self.loginfo("start human detection")
+    def run(self, img_msg, depth_msg):
+        """
+        アクション認識を行う関数
+        """
+        self.logdebug("start human detection")
         self.cv_img = self.tam_cv_bridge.compressed_imgmsg_to_cv2(img_msg)
-        human_detections = self.detection_inference(self.cv_img)
+        self.depth_img = self.tam_cv_bridge.compressed_imgmsg_to_depth(depth_msg)
 
+        human_detections = self.detection_inference(self.cv_img)
         pose_results = None
 
         # 骨格推定を行う
         if self.is_skeleton_recog:
+            self.logdebug("start keypoint estimation")
             pose_results = self.pose_inference(self.cv_img, human_detections)
             vis_pose_img = vis_pose_result(self.pose_model, self.cv_img.copy(), pose_results)
             pose_results_msg = self.tam_cv_bridge.cv2_to_imgmsg(vis_pose_img)
             self.pub.result_pose.publish(pose_results_msg)
+            people_keypoints_3d = []  # 複数人分のキーポイント
+
+            # 人ごとに3次元座標を算出しマーカーに出力する
+            array_msg_pose_3d = []  # publish用のデータはあとで作成するため，配列に一時保存する
+
+            for poses in pose_results:
+                self.logdebug("キーポイントごとの3次元座標を算出する")
+                key_points = poses["keypoints"]
+                keypoints_3d = []
+                msg_pose_3d = Ax3DPose()  # 1人分の3次元キーポイント座標
+                for id, key_point in enumerate(key_points):
+                    # 3次元座標算出
+                    keypoint_3d = self.mmaction_utils.pixelTo3D(key_point, self.depth_img.copy(), camera_model=self.cam_model)
+                    keypoints_3d.append(keypoint_3d)
+
+                    # rosにpublishするようのメッセージを作成
+                    msg_keypoint_3d = AxKeyPoint()  # 3次元座標と信頼値を入れる
+
+                    # 3次元座標が算出されたとき
+                    if keypoint_3d:
+                        msg_keypoint_3d.point = keypoint_3d["point"]
+                        msg_keypoint_3d.score = keypoint_3d["conf"]
+                    else:
+                        # 算出できなかったときは信頼値を-1にする
+                        # msg_keypoint_3d.point = Point(0, 0, 0)
+                        msg_keypoint_3d.score = -1
+
+                    # キーポイントの3次元座標を適切なメッセージの場所に格納
+                    if id == MM_ACTION_NOSE:
+                        msg_pose_3d.nose = msg_keypoint_3d
+                    elif id == MM_ACTION_LEFT_EYE:
+                        msg_pose_3d.left_eye = msg_keypoint_3d
+                    elif id == MM_ACTION_RIGHT_EYE:
+                        msg_pose_3d.right_eye = msg_keypoint_3d
+                    elif id == MM_ACTION_LEFT_EAR:
+                        msg_pose_3d.left_ear = msg_keypoint_3d
+                    elif id == MM_ACTION_RIGHT_EAR:
+                        msg_pose_3d.right_ear = msg_keypoint_3d
+                    elif id == MM_ACTION_LEFT_SHOULDER:
+                        msg_pose_3d.left_shoulder = msg_keypoint_3d
+                    elif id == MM_ACTION_RIGHT_SHOULDER:
+                        msg_pose_3d.right_shoulder = msg_keypoint_3d
+                    elif id == MM_ACTION_LEFT_ELBOW:
+                        msg_pose_3d.left_elbow = msg_keypoint_3d
+                    elif id == MM_ACTION_RIGHT_ELBOW:
+                        msg_pose_3d.right_elbow = msg_keypoint_3d
+                    elif id == MM_ACTION_LEFT_WRIST:
+                        msg_pose_3d.left_wrist = msg_keypoint_3d
+                    elif id == MM_ACTION_RIGHT_WRIST:
+                        msg_pose_3d.right_wrist = msg_keypoint_3d
+                    elif id == MM_ACTION_LEFT_HIP:
+                        msg_pose_3d.left_hip = msg_keypoint_3d
+                    elif id == MM_ACTION_RIGHT_HIP:
+                        msg_pose_3d.right_hip = msg_keypoint_3d
+                    elif id == MM_ACTION_LEFT_KNEE:
+                        msg_pose_3d.left_knee = msg_keypoint_3d
+                    elif id == MM_ACTION_RIGHT_KNEE:
+                        msg_pose_3d.right_knee = msg_keypoint_3d
+                    elif id == MM_ACTION_LEFT_ANKLE:
+                        msg_pose_3d.left_ankle = msg_keypoint_3d
+                    elif id == MM_ACTION_RIGHT_ANKLE:
+                        msg_pose_3d.right_ankle = msg_keypoint_3d
+
+                people_keypoints_3d.append(keypoints_3d)
+                array_msg_pose_3d.append(msg_pose_3d)
+                # msg_people_keypoints_3d.append(msg_pose_3d)
+
+            # 全員分のキーポイントを算出した後で，複数人のキーポイントをまとめてパブリッシュする
+            # msg_ax_pose_3d_array.header.stamp = rospy.Time.now()
+            # msg_ax_pose_3d_array.people = msg_people_keypoints_3d
+            # self.pub.people_poses_publisher.publish(msg_ax_pose_3d_array)
+
+            marker_array = self.mmaction_utils.display3DPose(people_keypoints_3d, frame=self.camera_frame)
+            self.pub.result_skeleton.publish(marker_array)
+
         else:
             # FIX ME: この場合も認識結果をpubするように修正
             # vis_pose_img = vis_pose_result(self.pose_model, self.cv_img.copy(), pose_result)
@@ -510,6 +527,7 @@ class MMActionServer(Node):
 
         # アクション認識を行う
         if self.is_action_recogniion:
+            self.logdebug("start action recognition")
             # resize frames to shortside 256
             new_w, new_h = mmcv.rescale_size((self.img_w, self.img_h), (256, np.Inf))
             new_img = mmcv.imresize(self.cv_img, (new_w, new_h))
@@ -524,15 +542,12 @@ class MMActionServer(Node):
 
             # 規定の枚数溜まっていたら，最新の結果を入れてからアクション認識を行う
             elif len(self.frames) == self.predict_stepsize:
-                self.loginfo("start action recognition with FIFO")
-                # self.queue(self.pose_results_list, pose_results)
+                self.logdebug("start action recognition with FIFO")
                 self.human_detections_list.pop(0)
                 self.frames.pop(0)
 
                 self.human_detections_list.append(human_detections)
                 self.frames.append(new_img)
-                # self.queue(self.human_detections_list, human_detections)
-                # self.queue(self.frames, new_img)
 
             # たまりすぎてしまった場合は，一度リセットする
             elif len(self.frames) > self.predict_stepsize:
@@ -555,19 +570,21 @@ class MMActionServer(Node):
 
             # キーポイントごとの処理
             if self.use_skeleton_stdet:
-                self.logtrace('Use skeleton-based SpatioTemporal Action Detection')
-                clip_len, frame_interval = 30, 1
-                timestamps, stdet_preds = self.skeleton_based_stdet(self.stdet_label_map, human_detections, pose_results, num_frame, clip_len, frame_interval, h, w)
-                for i in range(len(human_detections)):
-                    det = human_detections[i]
-                    det[:, 0:4:2] *= w_ratio
-                    det[:, 1:4:2] *= h_ratio
-                    human_detections[i] = torch.from_numpy(det[:, :4]).to(self.device)
+                ...
+                # FIXME
+                # self.logtrace('Use skeleton-based SpatioTemporal Action Detection')
+                # clip_len, frame_interval = 30, 1
+                # timestamps, stdet_preds = self.skeleton_based_stdet(self.stdet_label_map, human_detections, pose_results, num_frame, clip_len, frame_interval, h, w)
+                # for i in range(len(human_detections)):
+                #     det = human_detections[i]
+                #     det[:, 0:4:2] *= w_ratio
+                #     det[:, 1:4:2] *= h_ratio
+                #     human_detections[i] = torch.from_numpy(det[:, :4]).to(self.device)
 
             # キーポイントベースではない処理
             else:
                 temp_human_detections_list = cp.deepcopy(self.human_detections_list)
-                self.loginfo('Use rgb-based SpatioTemporal Action Detection')
+                self.logdebug('Use rgb-based SpatioTemporal Action Detection')
                 for i in range(len(temp_human_detections_list)):
                     det = temp_human_detections_list[i]
                     det[:, 0:4:2] *= w_ratio
@@ -575,49 +592,61 @@ class MMActionServer(Node):
                     temp_human_detections_list[i] = torch.from_numpy(det[:, :4]).to(self.device)
                 timestamps, stdet_preds = self.rgb_based_stdet(cp.copy(self.frames), self.stdet_label_map, temp_human_detections_list, self.img_w, self.img_h, new_w, new_h, w_ratio, h_ratio)
 
+            self.logdebug("ラベル付きのアクション認識結果をパブリッシュするための準備")
+            msg_pose3d_with_label_array = Ax3DPoseWithLabelArray()
+            msg_pose3d_with_label_array.header.stamp = rospy.Time.now()
+            people_msg_array = []  # メッセージを集約するための配列
+
+            try:
+                for human_id, cv_human_pos in enumerate(human_detections):
+                    hand_wave_id = 0
+                    # print(cv_human_pos)
+                    # print(stdet_preds[0][human_id])
+                    self.logdebug("一人分のラベル付き認識結果を作成")
+                    # rosでpublishするデータを作成
+                    msg_pose_3d_with_label = Ax3DPoseWithLabel()
+                    msg_pose_3d_with_label.keypoints = array_msg_pose_3d[human_id]
+                    msg_pose_3d_with_label.x = int(cv_human_pos[0])
+                    msg_pose_3d_with_label.y = int(cv_human_pos[1])
+                    msg_pose_3d_with_label.h = int(cv_human_pos[2] - cv_human_pos[0])
+                    msg_pose_3d_with_label.w = int(cv_human_pos[3] - cv_human_pos[1])
+                    msg_pose_3d_with_label.score = [stdet_preds[0][human_id][hand_wave_id][1]]
+                    people_msg_array.append(msg_pose_3d_with_label)
+
+                temp_text = "見つけた人の数: " + str(len(people_msg_array))
+                self.logdebug(temp_text)
+
+            except IndexError as e:
+                self.loginfo(e)
+                self.loginfo("delte current data")
+
+            # publish data with label
+            self.logdebug("complete calc all person data")
+            msg_pose3d_with_label_array.people = people_msg_array
+            msg_pose3d_with_label_array.header.frame_id = self.camera_frame
+            self.pub.people_poses_publisher.publish(msg_pose3d_with_label_array)
+
+            # 可視化用画像の作成とpub
+
             # アクション認識の結果がない場合
             if timestamps is None and stdet_preds is None:
                 cv_result = self.cv_img
 
             # アクション認識の結果がある場合
             else:
+                self.logdebug("キーポイントとアクション認識の結果を可視化する")
                 stdet_results = []
                 timestamps = [self.predict_stepsize]
                 for timestamp, prediction in zip(timestamps, stdet_preds):
                     human_detection = temp_human_detections_list[timestamp - 1]
                     stdet_results.append(self.pack_result(human_detection, prediction, new_h, new_w))
 
-                cv_result = self.action_result_visualizer(self.cv_img, stdet_results, stdet_preds, pose_results)
+                cv_result = self.action_result_visualizer(self.cv_img, stdet_results, pose_results)
 
             self.result_action_msg = self.tam_cv_bridge.cv2_to_imgmsg(cv_result)
             self.pub.result_action.publish(self.result_action_msg)
 
-            # temp_human_detections_list = []
-            # self.pose_results_list = []
-            # self.human_detections_list = []
-            # self.frames = []
-
             return True
-
-            # dense_n = int(self.predict_stepsize / self.output_stepsize)
-            # output_timestamps = self.dense_timestamps(timestamps, dense_n)
-            # # frames = [cv2.imread(frame_paths[timestamp - 1]) for timestamp in output_timestamps]
-
-            # print('Performing visualization')
-            # pose_model = init_pose_model(self.pose_config, self.pose_checkpoint, self.device)
-
-            # # if args.use_skeleton_recog or args.use_skeleton_stdet:
-            # #     pose_results = [
-            # #         pose_results[timestamp - 1] for timestamp in output_timestamps
-            # #     ]
-            # action_result = ""
-            # vis_frames = self.visualize(self.frames, stdet_results, pose_results, action_result, pose_model)
-            # vid = mpy.ImageSequenceClip([x[:, :, ::-1] for x in vis_frames], fps=self.output_fps)
-            # vid.write_videofile(args.out_filename)
-
-            # tmp_frame_dir = osp.dirname(frame_paths[0])
-            # shutil.rmtree(tmp_frame_dir)
-
 
 
 if __name__ == '__main__':
