@@ -446,12 +446,13 @@ class MMActionServer(Node):
             people_keypoints_3d = []  # 複数人分のキーポイント
 
             # 人ごとに3次元座標を算出しマーカーに出力する
+            array_msg_pose_3d = []  # publish用のデータはあとで作成するため，配列に一時保存する
+
             for poses in pose_results:
                 self.logdebug("キーポイントごとの3次元座標を算出する")
                 key_points = poses["keypoints"]
                 keypoints_3d = []
                 msg_pose_3d = Ax3DPose()  # 1人分の3次元キーポイント座標
-                array_msg_pose_3d = []  # publish用のデータはあとで作成するため，配列に一時保存する
                 for id, key_point in enumerate(key_points):
                     # 3次元座標算出
                     keypoint_3d = self.mmaction_utils.pixelTo3D(key_point, self.depth_img.copy(), camera_model=self.cam_model)
@@ -598,8 +599,10 @@ class MMActionServer(Node):
 
             try:
                 for human_id, cv_human_pos in enumerate(human_detections):
-                    self.logdebug("一人分のラベル付き認識結果を作成")
                     hand_wave_id = 0
+                    # print(cv_human_pos)
+                    # print(stdet_preds[0][human_id])
+                    self.logdebug("一人分のラベル付き認識結果を作成")
                     # rosでpublishするデータを作成
                     msg_pose_3d_with_label = Ax3DPoseWithLabel()
                     msg_pose_3d_with_label.keypoints = array_msg_pose_3d[human_id]
@@ -607,16 +610,20 @@ class MMActionServer(Node):
                     msg_pose_3d_with_label.y = int(cv_human_pos[1])
                     msg_pose_3d_with_label.h = int(cv_human_pos[2] - cv_human_pos[0])
                     msg_pose_3d_with_label.w = int(cv_human_pos[3] - cv_human_pos[1])
-                    msg_pose_3d_with_label.score = [stdet_preds[human_id][0][hand_wave_id][1]]
+                    msg_pose_3d_with_label.score = [stdet_preds[0][human_id][hand_wave_id][1]]
                     people_msg_array.append(msg_pose_3d_with_label)
 
+                temp_text = "見つけた人の数: " + str(len(people_msg_array))
+                self.logdebug(temp_text)
+
             except IndexError as e:
-                self.logdebug(e)
-                self.logdebug("delte current data")
+                self.loginfo(e)
+                self.loginfo("delte current data")
 
             # publish data with label
             self.logdebug("complete calc all person data")
             msg_pose3d_with_label_array.people = people_msg_array
+            msg_pose3d_with_label_array.header.frame_id = self.camera_frame
             self.pub.people_poses_publisher.publish(msg_pose3d_with_label_array)
 
             # 可視化用画像の作成とpub

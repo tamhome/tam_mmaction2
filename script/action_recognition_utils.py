@@ -114,7 +114,7 @@ class MMActionUtils(Logger):
                     if depth > 0:
                         depth_list.append(depth)
                 except Exception as e:
-                    self.logerr(e)
+                    self.logwarn(e)
                     continue
 
         if len(depth_list) != 0:
