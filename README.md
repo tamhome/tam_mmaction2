@@ -2,14 +2,23 @@
 
 ## model zoo
 
+- **太字：現在使用中のモデル**
+
+- [human detectionのモデル配置場所](./io/human_detection/pths/)
+- [pose estimationのモデル配置場所](./io/pose_estimation/pths/)
+- [action recognitionのモデル配置場所](./io/action_recognition/pths/)
+
 - human detection
   - [R-50-FPN-pytorch-2x-38.4](https://download.openmmlab.com/mmdetection/v2.0/faster_rcnn/faster_rcnn_r50_fpn_2x_coco/faster_rcnn_r50_fpn_2x_coco_bbox_mAP-0.384_20200504_210434-a5d8aa15.pth)
+  - [**yolox-tiny**](https://download.openmmlab.com/mmdetection/v2.0/yolox/yolox_tiny_8x8_300e_coco/yolox_tiny_8x8_300e_coco_20211124_171234-b4047906.pth)
 
 - pose estimation
   - [hr-net-w32](https://download.openmmlab.com/mmpose/top_down/hrnet/hrnet_w32_coco_256x192-c78dce93_20200708.pth)
+  - [**seresnet-50**](https://download.openmmlab.com/mmpose/top_down/seresnet/seresnet50_coco_256x192-25058b66_20200727.pth)
 
 - action recognition
-  - [slowfast-temporal-max](https://download.openmmlab.com/mmaction/detection/ava/slowfast_temporal_max_focal_alpha3_gamma1_kinetics_pretrained_r50_8x8x1_cosine_10e_ava22_rgb/slowfast_temporal_max_focal_alpha3_gamma1_kinetics_pretrained_r50_8x8x1_cosine_10e_ava22_rgb-345618cd.pth)
+  - [slowfast-omnisource-r101](https://download.openmmlab.com/mmaction/detection/ava/slowonly_omnisource_pretrained_r101_8x8x1_20e_ava_rgb/slowonly_omnisource_pretrained_r101_8x8x1_20e_ava_rgb_20201217-16378594.pth)
+  - [**slowfast-temporal-max**](https://download.openmmlab.com/mmaction/detection/ava/slowfast_temporal_max_focal_alpha3_gamma1_kinetics_pretrained_r50_8x8x1_cosine_10e_ava22_rgb/slowfast_temporal_max_focal_alpha3_gamma1_kinetics_pretrained_r50_8x8x1_cosine_10e_ava22_rgb-345618cd.pth)
 
 ## 環境構築
 
