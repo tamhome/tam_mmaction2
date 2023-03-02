@@ -5,14 +5,25 @@
 
 import os
 import cv2
-import copy as cp
+import sys
 import mmcv
-import numpy as np
 import torch
+import roslib
+import copy as cp
+import numpy as np
 import image_geometry
 from mmcv.runner import load_checkpoint
 from mmaction.models import build_detector
 from action_recognition_utils import MMActionUtils
+from mmdet.apis import inference_detector, init_detector
+from mmpose.apis import (inference_top_down_pose_model, init_pose_model, vis_pose_result)
+
+# トラッキングについて
+from mmcv.ops import RoIPool
+from mmcv.parallel import collate, scatter
+from mmdet.datasets.pipelines import Compose
+# from mmtrack.models import build_model
+from mmtrack.apis import inference_mot, init_model
 
 # from mmaction.apis import inference_recognizer, init_recognizer
 # from mmdeploy.apis import build_task_processor
@@ -20,20 +31,6 @@ from action_recognition_utils import MMActionUtils
 # import onnxruntime
 # import onnx
 # import copy
-
-try:
-    from mmdet.apis import inference_detector, init_detector
-except (ImportError, ModuleNotFoundError):
-    raise ImportError('Failed to import `inference_detector` and '
-                      '`init_detector` form `mmdet.apis`. These apis are '
-                      'required in this demo! ')
-
-try:
-    from mmpose.apis import (inference_top_down_pose_model, init_pose_model, vis_pose_result)
-except (ImportError, ModuleNotFoundError):
-    raise ImportError('Failed to import `inference_top_down_pose_model`, '
-                      '`init_pose_model`, and `vis_pose_result` form '
-                      '`mmpose.apis`. These apis are required in this demo! ')
 
 # rosに関連するインポート
 # import tamlib
@@ -95,11 +92,14 @@ class MMActionServer(Node):
 
         self.description = description.load_robot_description()
         self.io_path = roslib.packages.get_pkg_dir("tam_mmaction2") + "/io/"
+        # self.ailia_base_path = roslib.packages.get_pkg_dir("tam_mmaction2") + "/third_pkgs/ailia-models/"
         self.device = "cuda:0"
 
         self.short_side = 480
         self.img_h = 480
         self.img_w = 640
+        self.frame_num = 0  # トラッキングに関する制御用の変数
+        self.fps = 30
 
         # 人物検出（骨格推定なし）に関するパラメータ
         self.det_score_thr = 0.6
@@ -107,6 +107,12 @@ class MMActionServer(Node):
         self.det_checkpoint = self.io_path + "human_detection/pths/yolox_tiny_8x8_300e_coco_20211124_171234-b4047906.pth"
         self.det_model = init_detector(self.det_config, self.det_checkpoint, self.device)
         assert self.det_model.CLASSES[0] == 'person', ('We require you to use a detector trained on COCO')
+
+        # トラッキングについて
+        self.tracking_thr = 0.95
+        self.track_config = self.io_path + "tracking/configs/deepsort_faster-rcnn_fpn_4e_mot17-private-half.py"
+        self.track_pth = self.io_path + "tracking/pths/faster-rcnn_r50_fpn_4e_mot17-half-64ee2ed4.pth"
+        self.tracking_model = init_model(self.track_config, self.track_pth, device=self.device)
 
         # 骨格推定に関するパラメータ
         self.pose_config = self.io_path + "pose_estimation/configs/seresnet50_coco_256x192.py"
@@ -198,6 +204,7 @@ class MMActionServer(Node):
         self.pub_register("result_action", "/mmaction2/action_estimation/image", Image, queue_size=1)
         self.pub_register("result_skeleton", "/mmaction2/action_estimation/skeleton", MarkerArray, queue_size=1)
         self.pub_register("people_poses_publisher", "/mmaction2/poses/with_label", Ax3DPoseWithLabelArray, queue_size=1)
+        self.pub_register("result_tracking", "/mmaction2/human_tracking/image", Image, queue_size=1)
         # self.pub_register("people_poses_publisher", "/mmaction2/poses", Ax3DPoseArray, queue_size=1)
         # self.pub_register("poses_publisher", "/mmaction2/poses", Ax3DPose, queue_size=1)
 
@@ -431,11 +438,79 @@ class MMActionServer(Node):
             results.append((prop.data.cpu().numpy(), [x[0] for x in res], [x[1] for x in res]))
         return results
 
+    # def inference_mot(self, model, img, frame_id):
+    #     """Inference image(s) with the mot model.
+    #     Args:
+    #         model (nn.Module): The loaded mot model.
+    #         img (str | ndarray): Either image name or loaded image.
+    #         frame_id (int): frame id.
+    #     Returns:
+    #         dict[str : ndarray]: The tracking results.
+    #     """
+    #     cfg = model.cfg
+    #     device = next(model.parameters()).device  # model device
+    #     # prepare data
+    #     if isinstance(img, np.ndarray):
+    #         # directly add img
+    #         data = dict(img=img, img_info=dict(frame_id=frame_id), img_prefix=None)
+    #         cfg = cfg.copy()
+    #         # set loading pipeline type
+    #         cfg.data.test.pipeline[0].type = 'LoadImageFromWebcam'
+    #     else:
+    #         # add information into dict
+    #         data = dict(
+    #             img_info=dict(filename=img, frame_id=frame_id), img_prefix=None)
+    #     # build the data pipeline
+    #     test_pipeline = Compose(cfg.data.test.pipeline)
+    #     data = test_pipeline(data)
+    #     data = collate([data], samples_per_gpu=1)
+    #     if next(model.parameters()).is_cuda:
+    #         # scatter to specified GPU
+    #         data = scatter(data, [device])[0]
+    #     else:
+    #         for m in model.modules():
+    #             assert not isinstance(
+    #                 m, RoIPool
+    #             ), 'CPU inference with RoIPool is not supported currently.'
+    #         # just get the actual data from DataContainer
+    #         data['img_metas'] = data['img_metas'][0].data
+    #     # forward the model
+    #     with torch.no_grad():
+    #         result = model(return_loss=False, rescale=True, **data)
+    #     return result
+
     # def pixel_to_point(pixel, depth, fx, fy, cx, cy, depth_scale):
     #     # x = (pixel[0] - cx) * depth / fx / depth_scale
     #     y = (pixel[1] - cy) * depth / fy / depth_scale
     #     z = depth / depth_scale
     #     return x, y, z
+
+    def calc_iou(self, bbox1, bbox2):
+        # box1の座標
+        x1_1, y1_1, x2_1, y2_1 = bbox1
+        # box2の座標
+        x1_2, y1_2, x2_2, y2_2 = bbox2
+
+        # box1とbox2の共通領域の座標
+        x_left = max(x1_1, x1_2)
+        y_top = max(y1_1, y1_2)
+        x_right = min(x2_1, x2_2)
+        y_bottom = min(y2_1, y2_2)
+
+        # box1とbox2の共通領域の面積を計算する
+        if x_right < x_left or y_bottom < y_top:
+            intersection_area = 0
+        else:
+            intersection_area = (x_right - x_left) * (y_bottom - y_top)
+
+        # box1とbox2の面積を計算する
+        box1_area = (x2_1 - x1_1) * (y2_1 - y1_1)
+        box2_area = (x2_2 - x1_2) * (y2_2 - y1_2)
+
+        # IoUを計算する
+        iou = intersection_area / float(box1_area + box2_area - intersection_area)
+
+        return iou
 
     def make_depth_mask_img(self, rgb_img, depth_img, threshold):
         # depth画像のthreshold以上のピクセルを選択するマスクを作成する
@@ -444,14 +519,6 @@ class MMActionServer(Node):
         # マスクを使って、選択されたピクセルを黒色に変更する
         rgb_img[mask] = [0, 255, 0]
         return rgb_img
-
-    # def get_depth_scale(self, camera_info_msg):
-    #     fx = camera_info_msg.K[0]
-    #     fy = camera_info_msg.K[4]
-    #     cx = camera_info_msg.K[2]
-    #     cy = camera_info_msg.K[5]
-    #     depth_scale = camera_info_msg.D[0]
-    #     return fx, fy, cx, cy, depth_scale
 
     def run(self, img_msg, depth_msg):
         """
@@ -466,9 +533,58 @@ class MMActionServer(Node):
         self.depth_img = self.tam_cv_bridge.compressed_imgmsg_to_depth(depth_msg)
         # max_distanceが0に設定されているときはマスク処理を行わない
         if self.max_distance != 0.0:
+            self.cv_img4action = self.cv_img.copy()
             self.cv_img = self.make_depth_mask_img(rgb_img=self.cv_img.copy(), depth_img=self.depth_img.copy(), threshold=self.max_distance)
 
-        human_detections = self.detection_inference(self.cv_img)
+        # detectionを使用しない形に修正
+        # human_detections = self.detection_inference(self.cv_img)
+        # if len(human_detections) == 0:
+        #     self.loginfo("no human")
+        #     return
+
+        # トラッキング
+        self.tracking_result = inference_mot(self.tracking_model, self.cv_img.copy(), frame_id=self.frame_num)
+        if len(self.tracking_result["track_bboxes"][0]) == 0:
+            return
+
+        # # あとで扱いやすい形に整形 + 結果を描画
+        human_detections = []
+        tracking_id_list = []
+        tracking_img = self.cv_img.copy()
+
+        # # 人間だけをトラッキングする
+        for track_bbox in self.tracking_result["track_bboxes"][0]:
+            np_track_bbox = np.array((track_bbox[1], track_bbox[2], track_bbox[3], track_bbox[4], track_bbox[5]))
+            tracking_id_list.append(int(track_bbox[0]))
+            human_detections.append(np_track_bbox)
+            org1 = (int(track_bbox[1]), int(track_bbox[2]))
+            org2 = (int(track_bbox[3]), int(track_bbox[4]))
+            cv2.rectangle(tracking_img, org1, org2, color=(255, 0, 0), thickness=2, lineType=cv2.LINE_4)
+            cv2.putText(tracking_img, str(int(track_bbox[0])), org=org1, fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=1.0, color=(255, 0, 0), thickness=2, lineType=cv2.LINE_4)
+
+        # トラッキングの結果をpublish
+        tracking_img_msg = self.tam_cv_bridge.cv2_to_imgmsg(tracking_img)
+        self.pub.result_tracking.publish(tracking_img_msg)
+
+        # if len(tracking_id_list) == 0:
+        #     return
+
+        # float型のnp.arrayになおす
+        human_detections = np.array(human_detections).astype(np.float32)
+
+        # self.tracking_model.show_result(
+        #     self.cv_img,
+        #     self.tracking_result,
+        #     score_thr=self.tracking_thr,
+        #     show=True,
+        #     wait_time=int(1000. / self.fps) if self.fps else 0,
+        #     out_file="temp.png",
+        #     backend="cv2"
+        # )
+
+        # フレーム数のカウントを増やす
+        self.frame_num += 1
+
         pose_results = None
 
         # 骨格推定を行う
@@ -565,7 +681,7 @@ class MMActionServer(Node):
             self.logdebug("start action recognition")
             # resize frames to shortside 256
             new_w, new_h = mmcv.rescale_size((self.img_w, self.img_h), (256, np.Inf))
-            new_img = mmcv.imresize(self.cv_img, (new_w, new_h))
+            new_img = mmcv.imresize(self.cv_img4action, (new_w, new_h))
             w_ratio, h_ratio = new_w / self.img_w, new_h / self.img_h
 
             # ステップサイズに到達していない場合は，単純に認識結果を保存して終了する
@@ -620,11 +736,15 @@ class MMActionServer(Node):
             else:
                 temp_human_detections_list = cp.deepcopy(self.human_detections_list)
                 self.logdebug('Use rgb-based SpatioTemporal Action Detection')
-                for i in range(len(temp_human_detections_list)):
-                    det = temp_human_detections_list[i]
-                    det[:, 0:4:2] *= w_ratio
-                    det[:, 1:4:2] *= h_ratio
-                    temp_human_detections_list[i] = torch.from_numpy(det[:, :4]).to(self.device)
+                try:
+                    for i in range(len(temp_human_detections_list)):
+                        det = temp_human_detections_list[i]
+                        det[:, 0:4:2] *= w_ratio
+                        det[:, 1:4:2] *= h_ratio
+                        temp_human_detections_list[i] = torch.from_numpy(det[:, :4]).to(self.device)
+                except IndexError as e:
+                    self.logwarn(e)
+                    return
                 timestamps, stdet_preds = self.rgb_based_stdet(cp.copy(self.frames), self.stdet_label_map, temp_human_detections_list, self.img_w, self.img_h, new_w, new_h, w_ratio, h_ratio)
 
             self.logdebug("ラベル付きのアクション認識結果をパブリッシュするための準備")
@@ -633,19 +753,20 @@ class MMActionServer(Node):
             people_msg_array = []  # メッセージを集約するための配列
 
             try:
-                for human_id, cv_human_pos in enumerate(human_detections):
+                for i, cv_human_pos in enumerate(human_detections):
                     hand_wave_id = 0
                     # print(cv_human_pos)
-                    # print(stdet_preds[0][human_id])
+                    # print(stdet_preds[0][i])
                     self.logdebug("一人分のラベル付き認識結果を作成")
                     # rosでpublishするデータを作成
                     msg_pose_3d_with_label = Ax3DPoseWithLabel()
-                    msg_pose_3d_with_label.keypoints = array_msg_pose_3d[human_id]
+                    msg_pose_3d_with_label.keypoints = array_msg_pose_3d[i]
                     msg_pose_3d_with_label.x = int(cv_human_pos[0])
                     msg_pose_3d_with_label.y = int(cv_human_pos[1])
                     msg_pose_3d_with_label.h = int(cv_human_pos[2] - cv_human_pos[0])
                     msg_pose_3d_with_label.w = int(cv_human_pos[3] - cv_human_pos[1])
-                    msg_pose_3d_with_label.score = [stdet_preds[0][human_id][hand_wave_id][1]]
+                    msg_pose_3d_with_label.id = tracking_id_list[i]
+                    msg_pose_3d_with_label.score = [stdet_preds[0][i][hand_wave_id][1]]
                     people_msg_array.append(msg_pose_3d_with_label)
 
                 temp_text = "見つけた人の数: " + str(len(people_msg_array))
@@ -662,7 +783,6 @@ class MMActionServer(Node):
             self.pub.people_poses_publisher.publish(msg_pose3d_with_label_array)
 
             # 可視化用画像の作成とpub
-
             # アクション認識の結果がない場合
             if timestamps is None and stdet_preds is None:
                 cv_result = self.cv_img
