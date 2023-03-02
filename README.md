@@ -20,6 +20,21 @@
 - [slowfast-omnisource-r101](https://download.openmmlab.com/mmaction/detection/ava/slowonly_omnisource_pretrained_r101_8x8x1_20e_ava_rgb/slowonly_omnisource_pretrained_r101_8x8x1_20e_ava_rgb_20201217-16378594.pth)
 - [**slowfast-temporal-max**](https://download.openmmlab.com/mmaction/detection/ava/slowfast_temporal_max_focal_alpha3_gamma1_kinetics_pretrained_r50_8x8x1_cosine_10e_ava22_rgb/slowfast_temporal_max_focal_alpha3_gamma1_kinetics_pretrained_r50_8x8x1_cosine_10e_ava22_rgb-345618cd.pth)
 
+## launch
+
+- 認識の最大距離を指定可能
+  - メートル単位で指定
+  - 0を指定した場合は，depthによるマスク処理を行わない
+
+```xml
+    <!-- Hyper parameter -->
+    <arg name="max_distance" default="2.0"/>
+    <!-- launch action recognition -->
+    <node pkg="tam_mmaction2" type="action_recognition_server.py" name="action_recognition_server" output="screen">
+        <param name="/max_distance" type="float" value="$(arg max_distance)"/>
+    </node>
+```
+
 ## 環境構築
 
 - mmpose, mmdetをインストールすると，mmcv-fullのバージョンを落とされることがある(?)
