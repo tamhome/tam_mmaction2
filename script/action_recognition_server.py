@@ -186,8 +186,11 @@ class MMActionServer(Node):
         self.sync_sub_register("rgbd", topics, callback_func=self.run)
         # self.sub_register("camera_info", self.description.topic.head_rgbd.camera_info, queue_size=1, callback_func=self.cb_sub_camera_info)
 
-        # カメラインフォを一度だけサブすくライブする
+        # カメラインフォを一度だけサブスクライブする
         camera_info_msg = rospy.wait_for_message(self.description.topic.head_rgbd.camera_info, CameraInfo)
+        # depthスケールの算出
+        # self.fx, self.fy, self.cx, self.cy, self.depth_scale = self.get_depth_scale(camera_info_msg)
+        # カメラモデルの作成
         self.cam_model = image_geometry.PinholeCameraModel()
         self.cam_model.fromCameraInfo(camera_info_msg)
 
@@ -197,6 +200,9 @@ class MMActionServer(Node):
         self.pub_register("people_poses_publisher", "/mmaction2/poses/with_label", Ax3DPoseWithLabelArray, queue_size=1)
         # self.pub_register("people_poses_publisher", "/mmaction2/poses", Ax3DPoseArray, queue_size=1)
         # self.pub_register("poses_publisher", "/mmaction2/poses", Ax3DPose, queue_size=1)
+
+        # rosparam
+        self.max_distance = rospy.get_param(rospy.get_name() + "/max_distance", 0)
 
     def __del__(self):
         """
@@ -425,13 +431,42 @@ class MMActionServer(Node):
             results.append((prop.data.cpu().numpy(), [x[0] for x in res], [x[1] for x in res]))
         return results
 
+    # def pixel_to_point(pixel, depth, fx, fy, cx, cy, depth_scale):
+    #     # x = (pixel[0] - cx) * depth / fx / depth_scale
+    #     y = (pixel[1] - cy) * depth / fy / depth_scale
+    #     z = depth / depth_scale
+    #     return x, y, z
+
+    def make_depth_mask_img(self, rgb_img, depth_img, threshold):
+        # depth画像のthreshold以上のピクセルを選択するマスクを作成する
+        mask = (depth_img * 0.001 >= threshold) | (depth_img == 0)
+
+        # マスクを使って、選択されたピクセルを黒色に変更する
+        rgb_img[mask] = [0, 255, 0]
+        return rgb_img
+
+    # def get_depth_scale(self, camera_info_msg):
+    #     fx = camera_info_msg.K[0]
+    #     fy = camera_info_msg.K[4]
+    #     cx = camera_info_msg.K[2]
+    #     cy = camera_info_msg.K[5]
+    #     depth_scale = camera_info_msg.D[0]
+    #     return fx, fy, cx, cy, depth_scale
+
     def run(self, img_msg, depth_msg):
         """
         アクション認識を行う関数
         """
+
+        if self.run_enable is False:
+            return
+
         self.logdebug("start human detection")
         self.cv_img = self.tam_cv_bridge.compressed_imgmsg_to_cv2(img_msg)
         self.depth_img = self.tam_cv_bridge.compressed_imgmsg_to_depth(depth_msg)
+        # max_distanceが0に設定されているときはマスク処理を行わない
+        if self.max_distance != 0.0:
+            self.cv_img = self.make_depth_mask_img(rgb_img=self.cv_img.copy(), depth_img=self.depth_img.copy(), threshold=self.max_distance)
 
         human_detections = self.detection_inference(self.cv_img)
         pose_results = None
