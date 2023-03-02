@@ -3,7 +3,7 @@
     <arg name="map_name" default="hma_wrs"/>
     <arg name="rtabmap" default="false"/>
     <arg name="simulator" default="false"/>
-    <arg name="max_distance" default="2.0"/>
+    <arg name="max_distance" default="2.5"/>
     <arg name="tracking" default="true"/>
 
 

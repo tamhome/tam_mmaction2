@@ -92,8 +92,7 @@ class MMActionServer(Node):
         self.human_detections_list = []  # ステップ枚数分の認識結果を保存する
         self.array_index = 0
         self.action_recog_counter = 1
-        self.action_recog_step = 3  # n回に一回だけ認識する
-
+        self.action_recog_step = 4  # n回に一回だけ認識する
 
         self.description = description.load_robot_description()
         self.io_path = roslib.packages.get_pkg_dir("tam_mmaction2") + "/io/"
@@ -207,9 +206,9 @@ class MMActionServer(Node):
 
         self.pub_register("result_pose", "/mmaction2/pose_estimation/image", Image, queue_size=1)
         self.pub_register("result_action", "/mmaction2/action_estimation/image", Image, queue_size=1)
+        self.pub_register("result_tracking", "/mmaction2/human_tracking/image", Image, queue_size=1)
         self.pub_register("result_skeleton", "/mmaction2/action_estimation/skeleton", MarkerArray, queue_size=1)
         self.pub_register("people_poses_publisher", "/mmaction2/poses/with_label", Ax3DPoseWithLabelArray, queue_size=1)
-        self.pub_register("result_tracking", "/mmaction2/human_tracking/image", Image, queue_size=1)
         # self.pub_register("people_poses_publisher", "/mmaction2/poses", Ax3DPoseArray, queue_size=1)
         # self.pub_register("poses_publisher", "/mmaction2/poses", Ax3DPose, queue_size=1)
 
@@ -534,7 +533,6 @@ class MMActionServer(Node):
             return
 
         self.logdebug("start human detection")
-        # print(self.is_tracking)
 
         self.cv_img = self.tam_cv_bridge.compressed_imgmsg_to_cv2(img_msg)
         self.depth_img = self.tam_cv_bridge.compressed_imgmsg_to_depth(depth_msg)
@@ -544,12 +542,12 @@ class MMActionServer(Node):
         if self.max_distance != 0.0:
             self.cv_img = self.make_depth_mask_img(rgb_img=self.cv_img.copy(), depth_img=self.depth_img.copy(), threshold=self.max_distance)
 
-        # トラッキングをしよする場合
+        # トラッキングを使用する場合
         if self.is_tracking:
             # トラッキング
             self.tracking_result = inference_mot(self.tracking_model, self.cv_img.copy(), frame_id=self.frame_num)
 
-            # # あとで扱いやすい形に整形 + 結果を描画
+            # あとで扱いやすい形に整形 + 結果を描画
             human_detections = []
             tracking_id_list = []
             tracking_img = self.cv_img.copy()
@@ -598,6 +596,9 @@ class MMActionServer(Node):
             human_detections = self.detection_inference(self.cv_img)
             if len(human_detections) == 0:
                 self.logdebug("no human")
+                msg_pose3d_with_label_array = Ax3DPoseWithLabelArray()
+                msg_pose3d_with_label_array.header.stamp = rospy.Time.now()
+                self.pub.people_poses_publisher.publish(msg_pose3d_with_label_array)
                 return
 
         pose_results = None
