@@ -4,6 +4,7 @@
     <arg name="rtabmap" default="false"/>
     <arg name="simulator" default="false"/>
     <arg name="max_distance" default="2.0"/>
+    <arg name="tracking" default="true"/>
 
 
     <!-- offline slam -->
@@ -19,6 +20,7 @@
     <!-- action recognition -->
     <node pkg="tam_mmaction2" type="action_recognition_server.py" name="action_recognition_server" output="screen">
         <param name="/max_distance" type="double" value="$(arg max_distance)"/>
+        <param name="/tracking" type="bool" value="$(arg tracking)"/>
     </node>
     
     <node pkg="rviz" type="rviz" name="rviz_pose_result" args="-d $(find tam_mmaction2)/io/rviz/action_recognition.rviz"/>

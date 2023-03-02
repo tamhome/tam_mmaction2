@@ -81,6 +81,10 @@ class MMActionServer(Node):
     def __init__(self) -> None:
         super().__init__()
 
+        # rosparam
+        self.is_tracking = rospy.get_param(rospy.get_name() + "/tracking", True)
+        self.tracking_view = rospy.get_param(rospy.get_name() + "/vis_tracking/detail", False)
+
         self.mmaction_utils = MMActionUtils()
         self.key_list = self.mmaction_utils.mm_keypoint_info.keys()
         self.frames = []  # 画像をステップ枚数分保存する
@@ -89,6 +93,7 @@ class MMActionServer(Node):
         self.array_index = 0
         self.action_recog_counter = 1
         self.action_recog_step = 3  # n回に一回だけ認識する
+
 
         self.description = description.load_robot_description()
         self.io_path = roslib.packages.get_pkg_dir("tam_mmaction2") + "/io/"
@@ -529,64 +534,73 @@ class MMActionServer(Node):
             return
 
         self.logdebug("start human detection")
+        # print(self.is_tracking)
+
         self.cv_img = self.tam_cv_bridge.compressed_imgmsg_to_cv2(img_msg)
         self.depth_img = self.tam_cv_bridge.compressed_imgmsg_to_depth(depth_msg)
+        self.cv_img4action = self.cv_img.copy()
+
         # max_distanceが0に設定されているときはマスク処理を行わない
         if self.max_distance != 0.0:
-            self.cv_img4action = self.cv_img.copy()
             self.cv_img = self.make_depth_mask_img(rgb_img=self.cv_img.copy(), depth_img=self.depth_img.copy(), threshold=self.max_distance)
 
-        # detectionを使用しない形に修正
-        # human_detections = self.detection_inference(self.cv_img)
-        # if len(human_detections) == 0:
-        #     self.loginfo("no human")
-        #     return
+        # トラッキングをしよする場合
+        if self.is_tracking:
+            # トラッキング
+            self.tracking_result = inference_mot(self.tracking_model, self.cv_img.copy(), frame_id=self.frame_num)
 
-        # トラッキング
-        self.tracking_result = inference_mot(self.tracking_model, self.cv_img.copy(), frame_id=self.frame_num)
-        if len(self.tracking_result["track_bboxes"][0]) == 0:
-            return
+            # # あとで扱いやすい形に整形 + 結果を描画
+            human_detections = []
+            tracking_id_list = []
+            tracking_img = self.cv_img.copy()
 
-        # # あとで扱いやすい形に整形 + 結果を描画
-        human_detections = []
-        tracking_id_list = []
-        tracking_img = self.cv_img.copy()
+            # 人間だけをトラッキングする
+            for track_bbox in self.tracking_result["track_bboxes"][0]:
+                np_track_bbox = np.array((track_bbox[1], track_bbox[2], track_bbox[3], track_bbox[4], track_bbox[5]))
+                tracking_id_list.append(int(track_bbox[0]))
+                human_detections.append(np_track_bbox)
+                org1 = (int(track_bbox[1]), int(track_bbox[2]))
+                org2 = (int(track_bbox[3]), int(track_bbox[4]))
+                cv2.rectangle(tracking_img, org1, org2, color=(255, 0, 0), thickness=2, lineType=cv2.LINE_4)
+                cv2.putText(tracking_img, str(int(track_bbox[0])), org=org1, fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=1.0, color=(255, 0, 0), thickness=2, lineType=cv2.LINE_4)
 
-        # # 人間だけをトラッキングする
-        for track_bbox in self.tracking_result["track_bboxes"][0]:
-            np_track_bbox = np.array((track_bbox[1], track_bbox[2], track_bbox[3], track_bbox[4], track_bbox[5]))
-            tracking_id_list.append(int(track_bbox[0]))
-            human_detections.append(np_track_bbox)
-            org1 = (int(track_bbox[1]), int(track_bbox[2]))
-            org2 = (int(track_bbox[3]), int(track_bbox[4]))
-            cv2.rectangle(tracking_img, org1, org2, color=(255, 0, 0), thickness=2, lineType=cv2.LINE_4)
-            cv2.putText(tracking_img, str(int(track_bbox[0])), org=org1, fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=1.0, color=(255, 0, 0), thickness=2, lineType=cv2.LINE_4)
+            # トラッキングの結果をpublish
+            tracking_img_msg = self.tam_cv_bridge.cv2_to_imgmsg(tracking_img)
+            self.pub.result_tracking.publish(tracking_img_msg)
 
-        # トラッキングの結果をpublish
-        tracking_img_msg = self.tam_cv_bridge.cv2_to_imgmsg(tracking_img)
-        self.pub.result_tracking.publish(tracking_img_msg)
+            # float型のnp.arrayになおし，フレームのカウント数を増やす
+            human_detections = np.array(human_detections).astype(np.float32)
+            # フレーム数のカウントを増やす
+            self.frame_num += 1
 
-        # if len(tracking_id_list) == 0:
-        #     return
+            if self.frame_num > 100000:
+                # フレーム数が一定上になったらリセットする
+                self.frame_num = 0
 
-        # float型のnp.arrayになおす
-        human_detections = np.array(human_detections).astype(np.float32)
+            # self.tracking_model.show_result(
+            #     self.cv_img,
+            #     self.tracking_result,
+            #     score_thr=self.tracking_thr,
+            #     show=True,
+            #     wait_time=int(1000. / self.fps) if self.fps else 0,
+            #     out_file="temp.png",
+            #     backend="cv2"
+            # )
 
-        # self.tracking_model.show_result(
-        #     self.cv_img,
-        #     self.tracking_result,
-        #     score_thr=self.tracking_thr,
-        #     show=True,
-        #     wait_time=int(1000. / self.fps) if self.fps else 0,
-        #     out_file="temp.png",
-        #     backend="cv2"
-        # )
+            if len(self.tracking_result["track_bboxes"][0]) == 0:
+                # 人がいなかったときはダミーのデータをパブリッシュ
+                msg_pose3d_with_label_array = Ax3DPoseWithLabelArray()
+                msg_pose3d_with_label_array.header.stamp = rospy.Time.now()
+                self.pub.people_poses_publisher.publish(msg_pose3d_with_label_array)
+                return
 
-        # フレーム数のカウントを増やす
-        self.frame_num += 1
+        else:
+            human_detections = self.detection_inference(self.cv_img)
+            if len(human_detections) == 0:
+                self.logdebug("no human")
+                return
 
         pose_results = None
-
         # 骨格推定を行う
         if self.is_skeleton_recog:
             self.logdebug("start keypoint estimation")
@@ -743,7 +757,7 @@ class MMActionServer(Node):
                         det[:, 1:4:2] *= h_ratio
                         temp_human_detections_list[i] = torch.from_numpy(det[:, :4]).to(self.device)
                 except IndexError as e:
-                    self.logwarn(e)
+                    self.logtrace(e)
                     return
                 timestamps, stdet_preds = self.rgb_based_stdet(cp.copy(self.frames), self.stdet_label_map, temp_human_detections_list, self.img_w, self.img_h, new_w, new_h, w_ratio, h_ratio)
 
@@ -765,7 +779,8 @@ class MMActionServer(Node):
                     msg_pose_3d_with_label.y = int(cv_human_pos[1])
                     msg_pose_3d_with_label.h = int(cv_human_pos[2] - cv_human_pos[0])
                     msg_pose_3d_with_label.w = int(cv_human_pos[3] - cv_human_pos[1])
-                    msg_pose_3d_with_label.id = tracking_id_list[i]
+                    if self.is_tracking:
+                        msg_pose_3d_with_label.id = tracking_id_list[i]
                     msg_pose_3d_with_label.score = [stdet_preds[0][i][hand_wave_id][1]]
                     people_msg_array.append(msg_pose_3d_with_label)
 
