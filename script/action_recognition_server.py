@@ -84,6 +84,7 @@ class MMActionServer(Node):
         # rosparam
         self.is_tracking = rospy.get_param(rospy.get_name() + "/tracking", True)
         self.tracking_view = rospy.get_param(rospy.get_name() + "/vis_tracking/detail", False)
+        self.max_distance = rospy.get_param(rospy.get_name() + "/max_distance", 0)
 
         self.mmaction_utils = MMActionUtils()
         self.key_list = self.mmaction_utils.mm_keypoint_info.keys()
@@ -211,9 +212,6 @@ class MMActionServer(Node):
         self.pub_register("people_poses_publisher", "/mmaction2/poses/with_label", Ax3DPoseWithLabelArray, queue_size=1)
         # self.pub_register("people_poses_publisher", "/mmaction2/poses", Ax3DPoseArray, queue_size=1)
         # self.pub_register("poses_publisher", "/mmaction2/poses", Ax3DPose, queue_size=1)
-
-        # rosparam
-        self.max_distance = rospy.get_param(rospy.get_name() + "/max_distance", 0)
 
     def __del__(self):
         """
