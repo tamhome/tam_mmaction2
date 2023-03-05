@@ -23,7 +23,7 @@ from mmcv.ops import RoIPool
 from mmcv.parallel import collate, scatter
 from mmdet.datasets.pipelines import Compose
 # from mmtrack.models import build_model
-from mmtrack.apis import inference_mot, init_model
+# from mmtrack.apis import inference_mot, init_model
 
 # from mmaction.apis import inference_recognizer, init_recognizer
 # from mmdeploy.apis import build_task_processor
@@ -113,11 +113,13 @@ class MMActionServer(Node):
         self.det_model = init_detector(self.det_config, self.det_checkpoint, self.device)
         assert self.det_model.CLASSES[0] == 'person', ('We require you to use a detector trained on COCO')
 
-        # トラッキングについて
-        self.tracking_thr = 0.95
-        self.track_config = self.io_path + "tracking/configs/deepsort_faster-rcnn_fpn_4e_mot17-private-half.py"
-        self.track_pth = self.io_path + "tracking/pths/faster-rcnn_r50_fpn_4e_mot17-half-64ee2ed4.pth"
-        self.tracking_model = init_model(self.track_config, self.track_pth, device=self.device)
+        if self.is_tracking:
+            # トラッキングについて
+            from mmtrack.apis import inference_mot, init_model
+            self.tracking_thr = 0.95
+            self.track_config = self.io_path + "tracking/configs/deepsort_faster-rcnn_fpn_4e_mot17-private-half.py"
+            self.track_pth = self.io_path + "tracking/pths/faster-rcnn_r50_fpn_4e_mot17-half-64ee2ed4.pth"
+            self.tracking_model = init_model(self.track_config, self.track_pth, device=self.device)
 
         # 骨格推定に関するパラメータ
         self.pose_config = self.io_path + "pose_estimation/configs/seresnet50_coco_256x192.py"
@@ -196,6 +198,8 @@ class MMActionServer(Node):
         topics = {"hsr_head_img_msg": p_rgb_topic, "hsr_head_depth_msg": p_depth_topic}
         self.sync_sub_register("rgbd", topics, callback_func=self.run)
         # self.sub_register("camera_info", self.description.topic.head_rgbd.camera_info, queue_size=1, callback_func=self.cb_sub_camera_info)
+
+        self.logsuccess("mmaction2のサーバー起動")
 
         # カメラインフォを一度だけサブスクライブする
         camera_info_msg = rospy.wait_for_message(self.description.topic.head_rgbd.camera_info, CameraInfo)
