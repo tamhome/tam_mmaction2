@@ -209,6 +209,9 @@ class MMActionServer(Node):
         self.cam_model = image_geometry.PinholeCameraModel()
         self.cam_model.fromCameraInfo(camera_info_msg)
 
+        # アクション認識をデフォルトで起動しないように
+        self.run_enable = False
+
         self.pub_register("result_pose", "/mmaction2/pose_estimation/image", Image, queue_size=1)
         self.pub_register("result_action", "/mmaction2/action_estimation/image", Image, queue_size=1)
         self.pub_register("result_tracking", "/mmaction2/human_tracking/image", Image, queue_size=1)
