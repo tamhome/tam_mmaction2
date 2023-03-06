@@ -1,0 +1,15 @@
+std_msgs/Header header
+sensor_msgs/Image rgb
+sensor_msgs/Image d
+int32 amount
+string[] action
+string[] person
+float32[] score
+tam_mmaction2/ActionList[] scores
+int32[] x
+int32[] y
+int32[] w
+int32[] h
+string frame
+bool[] is_valid_pose
+geometry_msgs/Pose[] pose

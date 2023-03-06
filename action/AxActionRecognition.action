@@ -1,0 +1,6 @@
+float32 max_distance
+string specific_id
+---
+hma_ailia_msgs/AxActionRecognition result
+---
+bool feedback
