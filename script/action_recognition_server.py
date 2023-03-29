@@ -125,7 +125,7 @@ class MMActionServer(Node):
         # 骨格推定に関するパラメータ
         if self.is_whole_body:
             self.pose_config = self.io_path + "pose_estimation/configs/wholebody/hrnet_w32_coco_wholebody_256x192_dark.py"
-            self.pose_checkpoint = self.io_path + "pose_estimation/pths/wholebody/hrnet_w32_coco_256x192-c78dce93_20200708.pth"
+            self.pose_checkpoint = self.io_path + "pose_estimation/pths/wholebody/hrnet_w32_coco_wholebody_256x192_dark-469327ef_20200922.pth"
             self.pose_model = init_pose_model(self.pose_config, self.pose_checkpoint, self.device)
             # 骨格推定を実施するかどうか
             self.use_recog_skelton = True
