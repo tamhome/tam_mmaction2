@@ -83,6 +83,7 @@ class MMActionServer(Node):
 
         # rosparam
         self.is_tracking = rospy.get_param(rospy.get_name() + "/tracking", True)
+        self.is_whole_body = rospy.get_param("~is_wholebody", False)
         self.tracking_view = rospy.get_param(rospy.get_name() + "/vis_tracking/detail", False)
         self.max_distance = rospy.get_param(rospy.get_name() + "/max_distance", 0)
 
@@ -122,14 +123,23 @@ class MMActionServer(Node):
             self.tracking_model = init_model(self.track_config, self.track_pth, device=self.device)
 
         # 骨格推定に関するパラメータ
-        self.pose_config = self.io_path + "pose_estimation/configs/seresnet50_coco_256x192.py"
-        self.pose_checkpoint = self.io_path + "pose_estimation/pths/seresnet50_coco_256x192-25058b66_20200727.pth"
-        self.pose_model = init_pose_model(self.pose_config, self.pose_checkpoint, self.device)
-        # 骨格推定を実施するかどうか
-        self.is_skeleton_recog = True
+        if self.is_whole_body:
+            self.pose_config = self.io_path + "pose_estimation/configs/wholebody/hrnet_w32_coco_wholebody_256x192_dark.py"
+            self.pose_checkpoint = self.io_path + "pose_estimation/pths/wholebody/hrnet_w32_coco_256x192-c78dce93_20200708.pth"
+            self.pose_model = init_pose_model(self.pose_config, self.pose_checkpoint, self.device)
+            # 骨格推定を実施するかどうか
+            self.use_recog_skelton = True
+        else:
+            self.pose_config = self.io_path + "pose_estimation/configs/seresnet50_coco_256x192.py"
+            self.pose_checkpoint = self.io_path + "pose_estimation/pths/seresnet50_coco_256x192-25058b66_20200727.pth"
+            self.pose_model = init_pose_model(self.pose_config, self.pose_checkpoint, self.device)
+            # 骨格推定を実施するかどうか
+            self.use_recog_skelton = True
+
 
         # アクション認識に関するパラメータ
-        self.is_action_recogniion = True
+        # self.is_action_recogniion = True
+        self.is_action_recogniion = rospy.get_param("~is_action_recognition", False)
         # self.rgb_stdet_checkpoint = self.io_path + "action_recognition/pths/slowonly_omnisource_pretrained_r101_8x8x1_20e_ava_rgb_20201217-16378594.pth"
         # self.rgb_stdet_config = self.io_path + "action_recognition/configs/slowonly_omnisource_pretrained_r101_8x8x1_20e_ava_rgb.py"
         self.rgb_stdet_checkpoint = self.io_path + "action_recognition/pths/slowfast_temporal_max_focal_alpha3_gamma1_kinetics_pretrained_r50_8x8x1_cosine_10e_ava22_rgb-345618cd.pth"
@@ -210,7 +220,10 @@ class MMActionServer(Node):
         self.cam_model.fromCameraInfo(camera_info_msg)
 
         # アクション認識をデフォルトで起動しないように
-        self.run_enable = False
+        self.run_enable = rospy.get_param("~auto_start", False)
+        # self.run_enable = False
+        self.loginfo("rosservice call is needed to start action recognition!")
+        self.loginfo("rosservice call /action_recognition_server/run_enable \"data: true\" ")
 
         self.pub_register("result_pose", "/mmaction2/pose_estimation/image", Image, queue_size=1)
         self.pub_register("result_action", "/mmaction2/action_estimation/image", Image, queue_size=1)
@@ -608,7 +621,7 @@ class MMActionServer(Node):
 
         pose_results = None
         # 骨格推定を行う
-        if self.is_skeleton_recog:
+        if self.use_recog_skelton:
             self.logdebug("start keypoint estimation")
             pose_results = self.pose_inference(self.cv_img, human_detections)
             vis_pose_img = vis_pose_result(self.pose_model, self.cv_img.copy(), pose_results)
