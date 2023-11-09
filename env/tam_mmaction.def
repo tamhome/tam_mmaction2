@@ -1,0 +1,11 @@
+Bootstrap: docker
+From: ghcr.io/tamlabhsrproject/hsr_environments:latest
+
+%post
+    MMCV_WITH_OPS=1 FORCE_CUDA=1 pip install mmcv-full==1.7.1
+    /python_hsrc/bin/pip install mmcv-full==1.7.0
+    /python_hsrc/bin/pip install mmdet==2.28.1
+    /python_hsrc/bin/pip install mmpose==0.29.0
+    /python_hsrc/bin/pip install mmaction2==0.24.1
+    /python_hsrc/bin/pip cache purge
+    pip cache purge
