@@ -35,7 +35,6 @@ from mmdet.datasets.pipelines import Compose
 # rosに関連するインポート
 # import tamlib
 from tamlib.node_template import Node
-from hsrlib.utils import description
 from tamlib.cv_bridge import CvBridge
 import rospy
 import roslib
@@ -79,12 +78,13 @@ class MMActionServer(Node):
     """
 
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(loglevel="INFO")
 
         # rosparam
-        self.is_tracking = rospy.get_param(rospy.get_name() + "/tracking", True)
-        self.tracking_view = rospy.get_param(rospy.get_name() + "/vis_tracking/detail", False)
-        self.max_distance = rospy.get_param(rospy.get_name() + "/max_distance", 0)
+        self.is_tracking = rospy.get_param("~tracking", True)
+        self.tracking_view = rospy.get_param("~vis_tracking/detail", False)
+        self.max_distance = rospy.get_param("~max_distance", 0)
+        self.sigverse_flag = rospy.get_param("~is_sigverse", False)
 
         self.mmaction_utils = MMActionUtils()
         self.key_list = self.mmaction_utils.mm_keypoint_info.keys()
@@ -95,9 +95,8 @@ class MMActionServer(Node):
         self.action_recog_counter = 1
         self.action_recog_step = 4  # n回に一回だけ認識する
 
-        self.description = description.load_robot_description()
+        # mmライブラリのパラメータ設定
         self.io_path = roslib.packages.get_pkg_dir("tam_mmaction2") + "/io/"
-        # self.ailia_base_path = roslib.packages.get_pkg_dir("tam_mmaction2") + "/third_pkgs/ailia-models/"
         self.device = "cuda:0"
 
         self.short_side = 480
@@ -130,8 +129,6 @@ class MMActionServer(Node):
 
         # アクション認識に関するパラメータ
         self.is_action_recogniion = True
-        # self.rgb_stdet_checkpoint = self.io_path + "action_recognition/pths/slowonly_omnisource_pretrained_r101_8x8x1_20e_ava_rgb_20201217-16378594.pth"
-        # self.rgb_stdet_config = self.io_path + "action_recognition/configs/slowonly_omnisource_pretrained_r101_8x8x1_20e_ava_rgb.py"
         self.rgb_stdet_checkpoint = self.io_path + "action_recognition/pths/slowfast_temporal_max_focal_alpha3_gamma1_kinetics_pretrained_r50_8x8x1_cosine_10e_ava22_rgb-345618cd.pth"
         self.rgb_stdet_config = self.io_path + "action_recognition/configs/slowfast_temporal_max_focal_alpha3_gamma1_kinetics_pretrained_r50_8x8x1_cosine_10e_ava22_rgb.py"
         self.label_map_path = self.io_path + "action_recognition/configs/label_map_only_wave.txt"
@@ -172,7 +169,7 @@ class MMActionServer(Node):
         try:
             # In our spatiotemporal detection demo, different actions should have
             # the same number of bboxes.
-            self.rgb_stdet_config['model']['test_cfg']['rcnn']['action_thr'] = .0
+            self.rgb_stdet_config['model']['test_cfg']['rcnn']['action_thr'] = 0.
         except KeyError:
             pass
 
@@ -183,34 +180,44 @@ class MMActionServer(Node):
         self.rgb_stdet_model.to(self.device)
         self.rgb_stdet_model.eval()
 
+        self.logsuccess("mmaction2のサーバー起動")
+
+        # アクション認識をデフォルトで起動しないように
+        self.run_enable = True
+
         # ROSインタフェース
         self.tam_cv_bridge = CvBridge()
         self.camera_info = CameraInfo()
         self.cv_img = None
-        self.hsr_head_img_msg = CompressedImage()
-        self.hsr_head_depth_msg = CompressedImage()
         self.result_action_msg = Image()
 
-        self.camera_frame = self.description.frame.rgbd
+        if self.sigverse_flag is False:
+            # 実機での読み込み
+            from hsrlib.utils import description
+            self.description = description.load_robot_description()
+            self.camera_frame = self.description.frame.rgbd
+            p_rgb_topic = self.description.topic.head_rgbd.rgb_compressed
+            p_depth_topic = self.description.topic.head_rgbd.depth_compressed
+            self.hsr_head_img_msg = CompressedImage()
+            self.hsr_head_depth_msg = CompressedImage()
 
-        p_rgb_topic = self.description.topic.head_rgbd.rgb_compressed
-        p_depth_topic = self.description.topic.head_rgbd.depth_compressed
-        topics = {"hsr_head_img_msg": p_rgb_topic, "hsr_head_depth_msg": p_depth_topic}
-        self.sync_sub_register("rgbd", topics, callback_func=self.run)
-        # self.sub_register("camera_info", self.description.topic.head_rgbd.camera_info, queue_size=1, callback_func=self.cb_sub_camera_info)
+            topics = {"hsr_head_img_msg": p_rgb_topic, "hsr_head_depth_msg": p_depth_topic}
+            self.sync_sub_register("rgbd", topics, callback_func=self.run)
+            camera_info_msg = rospy.wait_for_message(self.description.topic.head_rgbd.camera_info, CameraInfo)
+        else:
+            self.camera_frame = "head_rgbd_sensor_link"
+            p_rgb_topic = "/hsrb/head_rgbd_sensor/rgb/image_raw"
+            p_depth_topic = "/hsrb/head_rgbd_sensor/depth_registered/image_raw"
+            self.hsr_head_img_msg = Image()
+            self.hsr_head_depth_msg = Image()
+            topics = {"hsr_head_img_msg": p_rgb_topic, "hsr_head_depth_msg": p_depth_topic}
+            self.sync_sub_register("rgbd", topics, callback_func=self.run)
+            # カメラインフォを一度だけサブスクライブする
+            camera_info_msg = rospy.wait_for_message("/hsrb/head_rgbd_sensor/rgb/camera_info", CameraInfo)
 
-        self.logsuccess("mmaction2のサーバー起動")
-
-        # カメラインフォを一度だけサブスクライブする
-        camera_info_msg = rospy.wait_for_message(self.description.topic.head_rgbd.camera_info, CameraInfo)
-        # depthスケールの算出
-        # self.fx, self.fy, self.cx, self.cy, self.depth_scale = self.get_depth_scale(camera_info_msg)
         # カメラモデルの作成
         self.cam_model = image_geometry.PinholeCameraModel()
         self.cam_model.fromCameraInfo(camera_info_msg)
-
-        # アクション認識をデフォルトで起動しないように
-        self.run_enable = False
 
         self.pub_register("result_pose", "/mmaction2/pose_estimation/image", Image, queue_size=1)
         self.pub_register("result_action", "/mmaction2/action_estimation/image", Image, queue_size=1)
@@ -225,6 +232,7 @@ class MMActionServer(Node):
         デストラクタ
         """
         self.loginfo("delete: tam_mmaction_recognition")
+        return
 
     def load_label_map(self, file_path):
         """Load Label Map.
@@ -539,8 +547,12 @@ class MMActionServer(Node):
 
         self.logdebug("start human detection")
 
-        self.cv_img = self.tam_cv_bridge.compressed_imgmsg_to_cv2(img_msg)
-        self.depth_img = self.tam_cv_bridge.compressed_imgmsg_to_depth(depth_msg)
+        if self.sigverse_flag:
+            self.cv_img = self.tam_cv_bridge.imgmsg_to_cv2(img_msg, encoding="bgr8")
+            self.depth_img = self.tam_cv_bridge.imgmsg_to_depth(depth_msg)
+        else:
+            self.cv_img = self.tam_cv_bridge.compressed_imgmsg_to_cv2(img_msg)
+            self.depth_img = self.tam_cv_bridge.compressed_imgmsg_to_depth(depth_msg)
         self.cv_img4action = self.cv_img.copy()
 
         # max_distanceが0に設定されているときはマスク処理を行わない
