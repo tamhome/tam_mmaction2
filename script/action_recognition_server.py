@@ -78,7 +78,7 @@ class MMActionServer(Node):
     """
 
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(loglevel="INFO")
 
         # rosparam
         self.is_tracking = rospy.get_param("~tracking", True)
@@ -94,29 +94,6 @@ class MMActionServer(Node):
         self.array_index = 0
         self.action_recog_counter = 1
         self.action_recog_step = 4  # n回に一回だけ認識する
-
-        if self.sigverse_flag is False:
-            # 実機での読み込み
-            from hsrlib.utils import description
-            self.description = description.load_robot_description()
-            self.camera_frame = self.description.frame.rgbd
-            p_rgb_topic = self.description.topic.head_rgbd.rgb_compressed
-            p_depth_topic = self.description.topic.head_rgbd.depth_compressed
-            topics = {"hsr_head_img_msg": p_rgb_topic, "hsr_head_depth_msg": p_depth_topic}
-            self.sync_sub_register("rgbd", topics, callback_func=self.run)
-            camera_info_msg = rospy.wait_for_message(self.description.topic.head_rgbd.camera_info, CameraInfo)
-        else:
-            self.camera_frame = "head_rgbd_sensor_link"
-            p_rgb_topic = "/hsrb/head_rgbd_sensor/rgb/image_rect_color/compressed"
-            p_depth_topic = "/hsrb/head_rgbd_sensor/depth_registered/image_rect_raw/compressedDepth"
-            topics = {"hsr_head_img_msg": p_rgb_topic, "hsr_head_depth_msg": p_depth_topic}
-            self.sync_sub_register("rgbd", topics, callback_func=self.run)
-            # カメラインフォを一度だけサブスクライブする
-            camera_info_msg = rospy.wait_for_message("/hsrb/head_rgbd_sensor/rgb/camera_info", CameraInfo)
-
-        # カメラモデルの作成
-        self.cam_model = image_geometry.PinholeCameraModel()
-        self.cam_model.fromCameraInfo(camera_info_msg)
 
         # mmライブラリのパラメータ設定
         self.io_path = roslib.packages.get_pkg_dir("tam_mmaction2") + "/io/"
@@ -203,18 +180,44 @@ class MMActionServer(Node):
         self.rgb_stdet_model.to(self.device)
         self.rgb_stdet_model.eval()
 
+        self.logsuccess("mmaction2のサーバー起動")
+
+        # アクション認識をデフォルトで起動しないように
+        self.run_enable = True
+
         # ROSインタフェース
         self.tam_cv_bridge = CvBridge()
         self.camera_info = CameraInfo()
         self.cv_img = None
-        self.hsr_head_img_msg = CompressedImage()
-        self.hsr_head_depth_msg = CompressedImage()
         self.result_action_msg = Image()
 
-        self.logsuccess("mmaction2のサーバー起動")
+        if self.sigverse_flag is False:
+            # 実機での読み込み
+            from hsrlib.utils import description
+            self.description = description.load_robot_description()
+            self.camera_frame = self.description.frame.rgbd
+            p_rgb_topic = self.description.topic.head_rgbd.rgb_compressed
+            p_depth_topic = self.description.topic.head_rgbd.depth_compressed
+            self.hsr_head_img_msg = CompressedImage()
+            self.hsr_head_depth_msg = CompressedImage()
 
-        # アクション認識をデフォルトで起動しないように
-        self.run_enable = False
+            topics = {"hsr_head_img_msg": p_rgb_topic, "hsr_head_depth_msg": p_depth_topic}
+            self.sync_sub_register("rgbd", topics, callback_func=self.run)
+            camera_info_msg = rospy.wait_for_message(self.description.topic.head_rgbd.camera_info, CameraInfo)
+        else:
+            self.camera_frame = "head_rgbd_sensor_link"
+            p_rgb_topic = "/hsrb/head_rgbd_sensor/rgb/image_raw"
+            p_depth_topic = "/hsrb/head_rgbd_sensor/depth_registered/image_raw"
+            self.hsr_head_img_msg = Image()
+            self.hsr_head_depth_msg = Image()
+            topics = {"hsr_head_img_msg": p_rgb_topic, "hsr_head_depth_msg": p_depth_topic}
+            self.sync_sub_register("rgbd", topics, callback_func=self.run)
+            # カメラインフォを一度だけサブスクライブする
+            camera_info_msg = rospy.wait_for_message("/hsrb/head_rgbd_sensor/rgb/camera_info", CameraInfo)
+
+        # カメラモデルの作成
+        self.cam_model = image_geometry.PinholeCameraModel()
+        self.cam_model.fromCameraInfo(camera_info_msg)
 
         self.pub_register("result_pose", "/mmaction2/pose_estimation/image", Image, queue_size=1)
         self.pub_register("result_action", "/mmaction2/action_estimation/image", Image, queue_size=1)
@@ -544,8 +547,12 @@ class MMActionServer(Node):
 
         self.logdebug("start human detection")
 
-        self.cv_img = self.tam_cv_bridge.compressed_imgmsg_to_cv2(img_msg)
-        self.depth_img = self.tam_cv_bridge.compressed_imgmsg_to_depth(depth_msg)
+        if self.sigverse_flag:
+            self.cv_img = self.tam_cv_bridge.imgmsg_to_cv2(img_msg, encoding="bgr8")
+            self.depth_img = self.tam_cv_bridge.imgmsg_to_depth(depth_msg)
+        else:
+            self.cv_img = self.tam_cv_bridge.compressed_imgmsg_to_cv2(img_msg)
+            self.depth_img = self.tam_cv_bridge.compressed_imgmsg_to_depth(depth_msg)
         self.cv_img4action = self.cv_img.copy()
 
         # max_distanceが0に設定されているときはマスク処理を行わない
